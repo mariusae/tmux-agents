@@ -12,16 +12,27 @@ import (
 	"github.com/mariusae/tmux-agents/internal/tmux"
 )
 
+type previewResult struct {
+	target string
+	lines  []string
+	err    string
+}
+
 type uiState struct {
 	application *app.App
 	terminal    *terminal
 
-	agents       []model.Agent
-	selected     int
-	previewLines []string
-	previewAt    time.Time
-	lastError    string
-	focused      bool
+	agents          []model.Agent
+	selected        int
+	previewLines    []string
+	previewErr      string
+	previewAt       time.Time
+	previewFor      string // target whose content is in previewLines
+	previewInflight string // target with a capture goroutine running
+	previewCh       chan previewResult
+	previewCancel   context.CancelFunc
+	lastError       string
+	focused         bool
 
 	fg    *rgbColor
 	bg    *rgbColor
@@ -41,11 +52,13 @@ func Run(ctx context.Context, application *app.App) error {
 		}
 	}()
 
+	previewCh := make(chan previewResult, 1)
 	ui := &uiState{
 		application: application,
 		terminal:    term,
 		focused:     true,
 		theme:       buildTheme(detectCapabilityFromEnv(), nil, nil),
+		previewCh:   previewCh,
 	}
 
 	_ = term.requestPalette()
@@ -117,6 +130,9 @@ func Run(ctx context.Context, application *app.App) error {
 		case <-previewTicker.C:
 			ui.refreshPreview(ctx)
 			_ = term.redraw(ui.render(time.Now()))
+		case r := <-previewCh:
+			ui.applyPreviewResult(r)
+			_ = term.redraw(ui.render(time.Now()))
 		case err, ok := <-reconcileDone:
 			if !ok {
 				reconcileDone = nil
@@ -168,22 +184,79 @@ func (ui *uiState) refreshAgents(ctx context.Context) {
 func (ui *uiState) refreshPreview(ctx context.Context) {
 	target := ui.selectedTarget()
 	if target == "" {
+		ui.cancelInflight()
 		ui.previewLines = nil
+		ui.previewErr = ""
+		ui.previewFor = ""
 		return
 	}
 
+	// Clear stale content when target changes.
+	if target != ui.previewFor {
+		ui.previewLines = nil
+		ui.previewErr = ""
+		ui.previewFor = ""
+	}
+
+	if target == ui.previewInflight {
+		return // capture already in flight for this target
+	}
+
+	// Cancel any in-flight capture for a different target.
+	ui.cancelInflight()
+
+	ui.previewInflight = target
 	_, height := ui.terminal.Size()
 	captureLines := maxInt(20, height-3)
 
-	text, err := tmux.CapturePaneStyled(ctx, target, captureLines)
-	if err != nil {
-		ui.lastError = err.Error()
-		return
-	}
+	captureCtx, cancel := context.WithCancel(ctx)
+	ui.previewCancel = cancel
 
-	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
-	ui.previewLines = trimEmptyEdgeLines(lines)
-	ui.previewAt = time.Now()
+	ch := ui.previewCh
+	go func() {
+		text, err := tmux.CapturePaneStyled(captureCtx, target, captureLines)
+		if captureCtx.Err() != nil {
+			return // cancelled, don't send stale result
+		}
+		result := previewResult{target: target}
+		if err != nil {
+			result.err = err.Error()
+		} else {
+			result.lines = trimEmptyEdgeLines(
+				strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n"),
+			)
+		}
+		select {
+		case ch <- result:
+		default:
+		}
+	}()
+}
+
+func (ui *uiState) cancelInflight() {
+	if ui.previewCancel != nil {
+		ui.previewCancel()
+		ui.previewCancel = nil
+	}
+	ui.previewInflight = ""
+}
+
+func (ui *uiState) applyPreviewResult(r previewResult) {
+	if r.target != ui.previewInflight {
+		return // stale result for a different target
+	}
+	ui.previewInflight = ""
+	ui.previewCancel = nil
+	if r.err != "" {
+		ui.previewErr = r.err
+		ui.previewLines = nil
+		ui.previewFor = r.target
+	} else {
+		ui.previewErr = ""
+		ui.previewLines = r.lines
+		ui.previewFor = r.target
+		ui.previewAt = time.Now()
+	}
 }
 
 func (ui *uiState) render(now time.Time) string {
@@ -200,7 +273,7 @@ func (ui *uiState) render(now time.Time) string {
 	rightWidth := maxInt(20, width-leftWidth-3)
 
 	lines := make([]string, 0, height)
-	lines = append(lines, ui.renderTopBorder(leftWidth, rightWidth))
+	lines = append(lines, ui.renderTopBorder(leftWidth, rightWidth, now))
 
 	contentHeight := height - 3
 	sidebarLines := ui.renderSidebar(leftWidth, contentHeight, now)
@@ -292,7 +365,11 @@ func (ui *uiState) renderPreviewPane(width, height int, now time.Time) []string 
 	}
 
 	if len(ui.previewLines) == 0 {
-		lines[0] = fillStyledLine(" preview unavailable", width, textStyle{bg: ui.theme.previewBG, dim: true})
+		msg := " preview unavailable"
+		if ui.previewErr != "" {
+			msg = " capture failed: " + ui.previewErr
+		}
+		lines[0] = fillStyledLine(msg, width, textStyle{bg: ui.theme.previewBG, dim: true})
 		for i := 1; i < height; i++ {
 			lines[i] = fillStyledLine("", width, base)
 		}
@@ -319,13 +396,16 @@ func (ui *uiState) renderPreviewPane(width, height int, now time.Time) []string 
 	return lines
 }
 
-func (ui *uiState) renderTopBorder(leftWidth, rightWidth int) string {
+func (ui *uiState) renderTopBorder(leftWidth, rightWidth int, now time.Time) string {
 	borderStyle := textStyle{fg: ui.theme.mutedFG}
 	left := titledBorderSection(" INBOX ", leftWidth)
 
 	rightTitle := " PREVIEW "
 	if target := ui.selectedTarget(); target != "" {
 		rightTitle = " " + target + " "
+		if !ui.previewAt.IsZero() && now.Sub(ui.previewAt) > 5*time.Second && ui.previewFor == target {
+			rightTitle = " " + target + " (stale) "
+		}
 	}
 	right := titledBorderSection(rightTitle, rightWidth)
 	return styleSequence(borderStyle) + "┌" + left + "┬" + right + "┐" + resetSequence()

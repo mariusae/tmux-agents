@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type Pane struct {
@@ -99,24 +100,38 @@ func capturePane(ctx context.Context, target string, lines int, styled bool) (st
 	if styled {
 		args = []string{"capture-pane", "-p", "-e", "-N", "-J", "-S", start, "-t", target}
 	}
-	cmd := exec.CommandContext(ctx, "tmux", args...)
 
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	backoff := 100 * time.Millisecond
+	const maxBackoff = 5 * time.Second
+	for {
+		cmd := exec.CommandContext(ctx, "tmux", args...)
+		var stdout bytes.Buffer
+		var stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
 
-	if err := cmd.Run(); err != nil {
-		if errors.Is(err, exec.ErrNotFound) {
-			return "", nil
+		if err := cmd.Run(); err != nil {
+			if errors.Is(err, exec.ErrNotFound) {
+				return "", nil
+			}
+			stderrStr := stderr.String()
+			if strings.Contains(stderrStr, "can't find pane") || strings.Contains(stderrStr, "failed to connect") {
+				return "", nil
+			}
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-time.After(backoff):
+			}
+			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
+			continue
 		}
-		if strings.Contains(stderr.String(), "can't find pane") || strings.Contains(stderr.String(), "failed to connect") {
-			return "", nil
-		}
-		return "", fmt.Errorf("tmux capture-pane: %w", err)
+
+		return stdout.String(), nil
 	}
-
-	return stdout.String(), nil
 }
 
 func SelectTarget(ctx context.Context, target string) error {
