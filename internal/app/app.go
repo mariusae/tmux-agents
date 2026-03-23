@@ -221,18 +221,18 @@ func statusLineForAgents(agents []model.Agent) string {
 
 func recencyIndicator(agent model.Agent) string {
 	if agent.StateChangedAt.IsZero() {
-		return "░"
+		return "▓"
 	}
 	age := time.Since(agent.StateChangedAt)
 	switch {
 	case age < 1*time.Minute:
-		return "░"
-	case age < 3*time.Minute:
-		return "▒"
-	case age < 10*time.Minute:
-		return "▓"
-	default:
 		return "█"
+	case age < 3*time.Minute:
+		return "▓"
+	case age < 10*time.Minute:
+		return "▒"
+	default:
+		return "░"
 	}
 }
 

@@ -84,7 +84,7 @@ func TestRunStatusOutput(t *testing.T) {
 		t.Fatalf("runStatus() code = %d, stderr = %q", code, stderr.String())
 	}
 
-	want := "❯ion:3.0 ░ "
+	want := "❯ion:3.0 █ "
 	if got := stdout.String(); got != want {
 		t.Fatalf("runStatus() output = %q, want %q", got, want)
 	}
