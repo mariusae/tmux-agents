@@ -84,8 +84,8 @@ func TestRunStatusWithDelimiter(t *testing.T) {
 		t.Fatalf("runStatus() code = %d, stderr = %q", code, stderr.String())
 	}
 
-	if got := stdout.String(); got != "codex@ion:3.0 • \n" {
-		t.Fatalf("runStatus() output = %q, want %q", got, "codex@ion:3.0 • \n")
+	if got := stdout.String(); got != "❯ion:3.0 • \n" {
+		t.Fatalf("runStatus() output = %q, want %q", got, "❯ion:3.0 • \n")
 	}
 }
 

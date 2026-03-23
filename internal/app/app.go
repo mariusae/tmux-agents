@@ -111,26 +111,35 @@ func (a *App) ListEvents(ctx context.Context, afterSeq uint64, limit int) ([]mod
 	return a.store.ListEvents(ctx, afterSeq, limit)
 }
 
-func (a *App) WaitingAgents(ctx context.Context) ([]model.Agent, error) {
+func (a *App) StatusAgents(ctx context.Context) ([]model.Agent, error) {
 	_ = a.reconcileIfStale(ctx, 1*time.Second)
 
-	return a.WaitingAgentsSnapshot(ctx)
+	return a.StatusAgentsSnapshot(ctx)
 }
 
-func (a *App) WaitingAgentsSnapshot(ctx context.Context) ([]model.Agent, error) {
+func (a *App) StatusAgentsSnapshot(ctx context.Context) ([]model.Agent, error) {
 	agents, err := a.store.ListAgents(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	waiting := make([]model.Agent, 0, len(agents))
+	now := time.Now()
+	notable := make([]model.Agent, 0, len(agents))
 	for _, agent := range agents {
-		if agent.AwaitingInput && agent.State != model.AgentStateGone {
-			waiting = append(waiting, agent)
+		if !agent.Live {
+			continue
+		}
+		if agent.AwaitingInput {
+			notable = append(notable, agent)
+			continue
+		}
+		if agent.State == model.AgentStateIdle && !agent.StateChangedAt.IsZero() && now.Sub(agent.StateChangedAt) < 30*time.Second {
+			notable = append(notable, agent)
+			continue
 		}
 	}
 
-	return sortAgents(dedupeAgents(waiting)), nil
+	return sortAgents(dedupeAgents(notable)), nil
 }
 
 func (a *App) Agents(ctx context.Context) ([]model.Agent, error) {
@@ -162,32 +171,44 @@ func (a *App) AllAgentsSnapshot(ctx context.Context) ([]model.Agent, error) {
 }
 
 func (a *App) StatusLine(ctx context.Context) (string, error) {
-	waiting, err := a.WaitingAgents(ctx)
+	agents, err := a.StatusAgents(ctx)
 	if err != nil {
 		return "", err
 	}
-	return statusLineForAgents(waiting), nil
+	return statusLineForAgents(agents), nil
 }
 
 func (a *App) StatusLineSnapshot(ctx context.Context) (string, error) {
-	waiting, err := a.WaitingAgentsSnapshot(ctx)
+	agents, err := a.StatusAgentsSnapshot(ctx)
 	if err != nil {
 		return "", err
 	}
-	return statusLineForAgents(waiting), nil
+	return statusLineForAgents(agents), nil
 }
 
-func statusLineForAgents(waiting []model.Agent) string {
-	if len(waiting) == 0 {
+func statusLineForAgents(agents []model.Agent) string {
+	if len(agents) == 0 {
 		return ""
 	}
 
-	labels := make([]string, 0, len(waiting))
-	for _, agent := range waiting {
-		labels = append(labels, agent.Label())
+	labels := make([]string, 0, len(agents))
+	for _, agent := range agents {
+		indicator := StatusIndicator(agent)
+		labels = append(labels, indicator+agent.LocationLabel())
 	}
 
 	return strings.Join(labels, " ")
+}
+
+func StatusIndicator(agent model.Agent) string {
+	switch {
+	case agent.AwaitingInput:
+		return "❯"
+	case agent.State == model.AgentStateIdle:
+		return "○"
+	default:
+		return ""
+	}
 }
 
 func (a *App) Reconcile(ctx context.Context) (reconcile.Result, error) {

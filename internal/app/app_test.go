@@ -10,7 +10,7 @@ import (
 	"github.com/mariusae/tmux-agents/internal/store"
 )
 
-func TestStatusLineShowsOnlyWaitingAgentLabels(t *testing.T) {
+func TestStatusLineShowsWaitingAndRecentlyIdleAgents(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -42,6 +42,17 @@ func TestStatusLineShowsOnlyWaitingAgentLabels(t *testing.T) {
 			Kind:              model.EventKindStateAwaitingInput,
 			Source:            model.EventSourceHook,
 		},
+		// Idle agent that transitioned recently — should appear.
+		{
+			Time:              now.Add(-5 * time.Second),
+			Provider:          "codex",
+			ProviderSessionID: "session-3",
+			TmuxSession:       "misc",
+			TmuxWindow:        "7",
+			TmuxPane:          "1",
+			Kind:              model.EventKindStateRunning,
+			Source:            model.EventSourceHook,
+		},
 		{
 			Time:              now,
 			Provider:          "codex",
@@ -49,6 +60,17 @@ func TestStatusLineShowsOnlyWaitingAgentLabels(t *testing.T) {
 			TmuxSession:       "misc",
 			TmuxWindow:        "7",
 			TmuxPane:          "1",
+			Kind:              model.EventKindStateIdle,
+			Source:            model.EventSourceHook,
+		},
+		// Idle agent that transitioned long ago — should NOT appear.
+		{
+			Time:              now.Add(-5 * time.Minute),
+			Provider:          "codex",
+			ProviderSessionID: "session-4",
+			TmuxSession:       "old",
+			TmuxWindow:        "0",
+			TmuxPane:          "0",
 			Kind:              model.EventKindStateIdle,
 			Source:            model.EventSourceHook,
 		},
@@ -68,8 +90,9 @@ func TestStatusLineShowsOnlyWaitingAgentLabels(t *testing.T) {
 		t.Fatalf("StatusLine returned error: %v", err)
 	}
 
-	if line != "claude@proj:1.2 codex@ion:3.0" {
-		t.Fatalf("StatusLine() = %q, want %q", line, "claude@proj:1.2 codex@ion:3.0")
+	want := "○misc:7.1 ❯proj:1.2 ❯ion:3.0"
+	if line != want {
+		t.Fatalf("StatusLine() = %q, want %q", line, want)
 	}
 }
 

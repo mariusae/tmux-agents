@@ -9,8 +9,8 @@ func TestResolveClaudeStop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve returned error: %v", err)
 	}
-	if resolved.Kind != "notification" {
-		t.Fatalf("expected notification kind, got %q", resolved.Kind)
+	if resolved.Kind != "state_idle" {
+		t.Fatalf("expected state_idle kind, got %q", resolved.Kind)
 	}
 	if resolved.Provider != "claude" {
 		t.Fatalf("expected claude provider, got %q", resolved.Provider)

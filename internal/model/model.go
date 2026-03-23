@@ -81,8 +81,9 @@ type Agent struct {
 	LastEventAt       time.Time  `json:"last_event_at"`
 	LastActiveAt      time.Time  `json:"last_active_at"`
 	LastSeenAt        time.Time  `json:"last_seen_at"`
-	StateChangedAt    time.Time  `json:"state_changed_at"`
-	ReconcileSource   string     `json:"reconcile_source,omitempty"`
+	StateChangedAt    time.Time   `json:"state_changed_at"`
+	StateSource       EventSource `json:"state_source,omitempty"`
+	ReconcileSource   string      `json:"reconcile_source,omitempty"`
 }
 
 func (a Agent) Label() string {
@@ -236,38 +237,50 @@ func ApplyEvent(agent Agent, event Event) Agent {
 
 	prevState := agent.State
 
-	switch event.Kind {
-	case EventKindPromptSubmitted, EventKindToolStarted, EventKindLiveDetected, EventKindStateRunning:
-		agent.State = AgentStateRunning
-		agent.AwaitingInput = false
+	// Reconcile events confirm liveness but defer to hook-derived state.
+	reconcileDefers := event.Source == EventSourceReconcile &&
+		agent.StateSource == EventSourceHook &&
+		event.Kind != EventKindLiveMissing &&
+		event.Kind != EventKindPaneClosed &&
+		event.Kind != EventKindStateGone
+
+	if reconcileDefers {
 		agent.Live = true
-		agent.LastActiveAt = event.Time
-	case EventKindToolFinished:
-		agent.State = AgentStateRunning
-		agent.AwaitingInput = false
-		agent.Live = true
-		agent.LastActiveAt = event.Time
-	case EventKindTurnCompleted, EventKindNotification, EventKindStateAwaitingInput:
-		agent.State = AgentStateAwaitingInput
-		agent.AwaitingInput = true
-		agent.Live = true
-	case EventKindStateIdle:
-		agent.State = AgentStateIdle
-		agent.AwaitingInput = false
-		agent.Live = true
-	case EventKindLiveMissing, EventKindPaneClosed, EventKindStateGone:
-		agent.State = AgentStateGone
-		agent.AwaitingInput = false
-		agent.Live = false
-	case EventKindPaneChanged, EventKindPaneMoved:
-		agent.Live = true
-		agent.LastActiveAt = event.Time
-		if agent.State == "" || agent.State == AgentStateUnknown || agent.State == AgentStateGone {
+		agent.LastSeenAt = event.Time
+	} else {
+		switch event.Kind {
+		case EventKindPromptSubmitted, EventKindToolStarted, EventKindLiveDetected, EventKindStateRunning:
 			agent.State = AgentStateRunning
-		}
-	case EventKindManualNote:
-		if agent.State == "" {
-			agent.State = AgentStateUnknown
+			agent.AwaitingInput = false
+			agent.Live = true
+			agent.LastActiveAt = event.Time
+		case EventKindToolFinished:
+			agent.State = AgentStateRunning
+			agent.AwaitingInput = false
+			agent.Live = true
+			agent.LastActiveAt = event.Time
+		case EventKindTurnCompleted, EventKindNotification, EventKindStateAwaitingInput:
+			agent.State = AgentStateAwaitingInput
+			agent.AwaitingInput = true
+			agent.Live = true
+		case EventKindStateIdle:
+			agent.State = AgentStateIdle
+			agent.AwaitingInput = false
+			agent.Live = true
+		case EventKindLiveMissing, EventKindPaneClosed, EventKindStateGone:
+			agent.State = AgentStateGone
+			agent.AwaitingInput = false
+			agent.Live = false
+		case EventKindPaneChanged, EventKindPaneMoved:
+			agent.Live = true
+			agent.LastActiveAt = event.Time
+			if agent.State == "" || agent.State == AgentStateUnknown || agent.State == AgentStateGone {
+				agent.State = AgentStateRunning
+			}
+		case EventKindManualNote:
+			if agent.State == "" {
+				agent.State = AgentStateUnknown
+			}
 		}
 	}
 
@@ -277,6 +290,11 @@ func ApplyEvent(agent Agent, event Event) Agent {
 
 	if agent.State != prevState && !event.Time.IsZero() {
 		agent.StateChangedAt = event.Time
+	}
+
+	// Track which source last set the state.
+	if agent.State != prevState {
+		agent.StateSource = event.Source
 	}
 
 	if event.Source == EventSourceReconcile {

@@ -65,7 +65,9 @@ func resolveKind(provider, rawEvent string) (string, error) {
 			return "tool_started", nil
 		case "posttooluse", "tool_finish", "tool_finished":
 			return "tool_finished", nil
-		case "stop", "notification", "done", "complete", "completed":
+		case "stop", "done", "complete", "completed":
+			return "state_idle", nil
+		case "notification":
 			return "notification", nil
 		default:
 			return "", fmt.Errorf("unknown claude hook event %q", rawEvent)

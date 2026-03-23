@@ -314,9 +314,47 @@ func classifyLiveState(provider, tail string) (model.EventKind, string) {
 			return model.EventKindStateRunning, "codex detected and actively working"
 		}
 		return model.EventKindStateIdle, "codex detected without an active or waiting prompt"
+	case "claude":
+		if claudeLooksAwaitingInput(tail) {
+			return model.EventKindStateAwaitingInput, "claude detected and awaiting user input"
+		}
+		if claudeLooksRunning(tail) {
+			return model.EventKindStateRunning, "claude detected and actively working"
+		}
+		return model.EventKindStateIdle, "claude detected without an active or waiting prompt"
 	default:
 		return model.EventKindLiveDetected, "agent detected in live tmux scan"
 	}
+}
+
+func claudeLooksAwaitingInput(tail string) bool {
+	// Claude Code doesn't have a distinct "awaiting input" state
+	// detectable from terminal output alone. The ">" prompt is the
+	// idle/ready prompt, not an input request. Actual input requests
+	// (AskUserQuestion) are detected via hooks.
+	_ = tail
+	return false
+}
+
+func claudeLooksRunning(tail string) bool {
+	for _, line := range lastNonEmptyLines(tail, 8) {
+		normalized := strings.ToLower(strings.TrimSpace(line))
+		// Tool use indicators.
+		if strings.HasPrefix(normalized, "⏺ ") || strings.HasPrefix(normalized, "● ") {
+			return true
+		}
+		// Progress/thinking indicators.
+		if strings.Contains(normalized, "thinking") {
+			return true
+		}
+		if strings.Contains(normalized, "reading") || strings.Contains(normalized, "writing") || strings.Contains(normalized, "editing") {
+			return true
+		}
+		if strings.Contains(normalized, "searching") || strings.Contains(normalized, "running") {
+			return true
+		}
+	}
+	return false
 }
 
 func codexLooksAwaitingInput(tail string) bool {
