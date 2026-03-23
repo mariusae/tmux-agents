@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
@@ -34,10 +35,36 @@ func OpenDefault() (*App, error) {
 	return Open(dbPath)
 }
 
+func OpenDefaultReadOnly() (*App, error) {
+	dbPath, err := defaultDBPath()
+	if err != nil {
+		return nil, err
+	}
+	return OpenReadOnly(dbPath)
+}
+
 func Open(dbPath string) (*App, error) {
 	st, err := store.OpenBolt(dbPath)
 	if err != nil {
 		return nil, err
+	}
+	return &App{store: st}, nil
+}
+
+func OpenReadOnly(dbPath string) (*App, error) {
+	st, err := store.OpenBoltReadOnly(dbPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			rw, openErr := Open(dbPath)
+			if openErr != nil {
+				return nil, openErr
+			}
+			_ = rw.Close()
+			st, err = store.OpenBoltReadOnly(dbPath)
+		}
+		if err != nil {
+			return nil, err
+		}
 	}
 	return &App{store: st}, nil
 }
@@ -86,6 +113,10 @@ func (a *App) ListEvents(ctx context.Context, afterSeq uint64, limit int) ([]mod
 func (a *App) WaitingAgents(ctx context.Context) ([]model.Agent, error) {
 	_ = a.reconcileIfStale(ctx, 1*time.Second)
 
+	return a.WaitingAgentsSnapshot(ctx)
+}
+
+func (a *App) WaitingAgentsSnapshot(ctx context.Context) ([]model.Agent, error) {
 	agents, err := a.store.ListAgents(ctx)
 	if err != nil {
 		return nil, err
@@ -104,6 +135,10 @@ func (a *App) WaitingAgents(ctx context.Context) ([]model.Agent, error) {
 func (a *App) Agents(ctx context.Context) ([]model.Agent, error) {
 	_ = a.reconcileIfStale(ctx, 1*time.Second)
 
+	return a.AgentsSnapshot(ctx)
+}
+
+func (a *App) AgentsSnapshot(ctx context.Context) ([]model.Agent, error) {
 	agents, err := a.store.ListAgents(ctx)
 	if err != nil {
 		return nil, err
@@ -116,8 +151,20 @@ func (a *App) StatusLine(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return statusLineForAgents(waiting), nil
+}
+
+func (a *App) StatusLineSnapshot(ctx context.Context) (string, error) {
+	waiting, err := a.WaitingAgentsSnapshot(ctx)
+	if err != nil {
+		return "", err
+	}
+	return statusLineForAgents(waiting), nil
+}
+
+func statusLineForAgents(waiting []model.Agent) string {
 	if len(waiting) == 0 {
-		return "", nil
+		return ""
 	}
 
 	labels := make([]string, 0, len(waiting))
@@ -125,11 +172,20 @@ func (a *App) StatusLine(ctx context.Context) (string, error) {
 		labels = append(labels, agent.Label())
 	}
 
-	return strings.Join(labels, " "), nil
+	return strings.Join(labels, " ")
 }
 
 func (a *App) Reconcile(ctx context.Context) (reconcile.Result, error) {
 	return reconcile.Run(ctx, a.store)
+}
+
+func ReconcileDefault(ctx context.Context) (reconcile.Result, error) {
+	application, err := OpenDefault()
+	if err != nil {
+		return reconcile.Result{}, err
+	}
+	defer application.Close()
+	return application.Reconcile(ctx)
 }
 
 func defaultDBPath() (string, error) {

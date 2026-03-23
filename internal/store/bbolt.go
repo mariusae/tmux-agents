@@ -22,7 +22,8 @@ var (
 )
 
 type BoltStore struct {
-	db *bolt.DB
+	db       *bolt.DB
+	readOnly bool
 }
 
 func OpenBolt(path string) (*BoltStore, error) {
@@ -30,7 +31,7 @@ func OpenBolt(path string) (*BoltStore, error) {
 		return nil, err
 	}
 
-	db, err := bolt.Open(path, 0o600, &bolt.Options{Timeout: 1 * time.Second})
+	db, err := bolt.Open(path, 0o600, &bolt.Options{Timeout: 5 * time.Second})
 	if err != nil {
 		return nil, err
 	}
@@ -50,11 +51,25 @@ func OpenBolt(path string) (*BoltStore, error) {
 	return &BoltStore{db: db}, nil
 }
 
+func OpenBoltReadOnly(path string) (*BoltStore, error) {
+	db, err := bolt.Open(path, 0o600, &bolt.Options{
+		Timeout:  5 * time.Second,
+		ReadOnly: true,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &BoltStore{db: db, readOnly: true}, nil
+}
+
 func (s *BoltStore) Close() error {
 	return s.db.Close()
 }
 
 func (s *BoltStore) RecordEvent(_ context.Context, event model.Event) (model.Event, model.Agent, error) {
+	if s.readOnly {
+		return model.Event{}, model.Agent{}, errors.New("store is read-only")
+	}
 	if event.Provider == "" {
 		return model.Event{}, model.Agent{}, errors.New("provider is required")
 	}
@@ -162,6 +177,9 @@ func (s *BoltStore) GetMeta(_ context.Context, key string) (string, error) {
 }
 
 func (s *BoltStore) SetMeta(_ context.Context, key string, value string) error {
+	if s.readOnly {
+		return errors.New("store is read-only")
+	}
 	return s.db.Update(func(tx *bolt.Tx) error {
 		return tx.Bucket(metaBucket).Put([]byte(key), []byte(value))
 	})

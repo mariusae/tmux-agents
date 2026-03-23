@@ -18,7 +18,7 @@ import (
 
 func Run(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer) int {
 	if len(args) == 0 {
-		application, err := app.OpenDefault()
+		application, err := app.OpenDefaultReadOnly()
 		if err != nil {
 			_, _ = fmt.Fprintf(stderr, "open store: %v\n", err)
 			return 1
@@ -52,26 +52,49 @@ func Run(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer)
 		return runUninstallHooks(ctx, stdout, stderr)
 	}
 
-	application, err := app.OpenDefault()
-	if err != nil {
-		_, _ = fmt.Fprintf(stderr, "open store: %v\n", err)
-		return 1
-	}
-	defer application.Close()
-
 	switch args[0] {
 	case "status":
+		application, err := app.OpenDefaultReadOnly()
+		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "open store: %v\n", err)
+			return 1
+		}
+		defer application.Close()
 		return runStatus(ctx, application, args[1:], stdout, stderr)
 	case "show":
+		application, err := app.OpenDefaultReadOnly()
+		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "open store: %v\n", err)
+			return 1
+		}
+		defer application.Close()
 		return runShow(ctx, application, stdout, stderr)
 	case "hook":
+		application, err := app.OpenDefault()
+		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "open store: %v\n", err)
+			return 1
+		}
+		defer application.Close()
 		return runHook(ctx, application, args[1:], stdout, stderr)
 	case "record":
+		application, err := app.OpenDefault()
+		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "open store: %v\n", err)
+			return 1
+		}
+		defer application.Close()
 		return runRecord(ctx, application, args[1:], stdout, stderr)
 	case "log":
+		application, err := app.OpenDefaultReadOnly()
+		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "open store: %v\n", err)
+			return 1
+		}
+		defer application.Close()
 		return runLog(ctx, application, args[1:], stdout, stderr)
 	case "reconcile":
-		result, err := application.Reconcile(ctx)
+		result, err := app.ReconcileDefault(ctx)
 		if err != nil {
 			_, _ = fmt.Fprintf(stderr, "reconcile: %v\n", err)
 			return 1
@@ -93,7 +116,7 @@ func runStatus(ctx context.Context, application *app.App, args []string, stdout 
 		return 1
 	}
 
-	line, err := application.StatusLine(ctx)
+	line, err := application.StatusLineSnapshot(ctx)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "status: %v\n", err)
 		return 1
@@ -215,7 +238,7 @@ func runLog(ctx context.Context, application *app.App, args []string, stdout io.
 }
 
 func runShow(ctx context.Context, application *app.App, stdout io.Writer, stderr io.Writer) int {
-	agents, err := application.Agents(ctx)
+	agents, err := application.AgentsSnapshot(ctx)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "show: %v\n", err)
 		return 1

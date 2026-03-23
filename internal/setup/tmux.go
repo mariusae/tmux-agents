@@ -14,6 +14,8 @@ const (
 	StatusInterpolation       = "#(tmux-agents status -d \" • \")"
 	legacyStatusInterpolation = "#(tmux-agents status)"
 	RecommendedInterval       = 1
+	PopupCommand              = `tmux display-popup -E "tmux-agents"`
+	PopupBinding              = `bind-key C-g display-popup -E -w 90% -h 90% "tmux-agents"`
 )
 
 type TmuxStatus struct {
@@ -34,6 +36,12 @@ func ShowSetupText(ctx context.Context) (string, error) {
 	b.WriteString("\n\n")
 	b.WriteString("status interpolation:\n")
 	b.WriteString(StatusInterpolation)
+	b.WriteString("\n\n")
+	b.WriteString("popup command:\n")
+	b.WriteString(PopupCommand)
+	b.WriteString("\n\n")
+	b.WriteString("optional tmux.conf binding:\n")
+	b.WriteString(PopupBinding)
 	b.WriteString("\n\n")
 	b.WriteString("runtime tmux commands:\n")
 	b.WriteString(fmt.Sprintf("tmux set-option -g status-interval %d\n", RecommendedInterval))

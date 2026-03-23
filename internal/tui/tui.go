@@ -53,12 +53,12 @@ func Run(ctx context.Context, application *app.App) error {
 	ui.refreshPreview(ctx)
 	_ = term.redraw(ui.render(time.Now()))
 
-	animationTicker := time.NewTicker(32 * time.Millisecond)
-	agentsTicker := time.NewTicker(1 * time.Second)
-	previewTicker := time.NewTicker(350 * time.Millisecond)
-	defer animationTicker.Stop()
+	agentsTicker := time.NewTicker(250 * time.Millisecond)
+	previewTicker := time.NewTicker(150 * time.Millisecond)
 	defer agentsTicker.Stop()
 	defer previewTicker.Stop()
+
+	reconcileDone := startBackgroundReconcile(ctx, 750*time.Millisecond)
 
 	for {
 		select {
@@ -123,8 +123,18 @@ func Run(ctx context.Context, application *app.App) error {
 		case <-previewTicker.C:
 			ui.refreshPreview(ctx)
 			_ = term.redraw(ui.render(time.Now()))
-		case now := <-animationTicker.C:
-			_ = term.redraw(ui.render(now))
+		case err, ok := <-reconcileDone:
+			if !ok {
+				reconcileDone = nil
+				continue
+			}
+			if err != nil {
+				ui.lastError = err.Error()
+			} else {
+				ui.refreshAgents(ctx)
+				ui.refreshPreview(ctx)
+			}
+			_ = term.redraw(ui.render(time.Now()))
 		}
 	}
 }
@@ -132,7 +142,7 @@ func Run(ctx context.Context, application *app.App) error {
 func (ui *uiState) refreshAgents(ctx context.Context) {
 	selectedKey := ui.selectedKey()
 
-	agents, err := ui.application.Agents(ctx)
+	agents, err := ui.application.AgentsSnapshot(ctx)
 	if err != nil {
 		ui.lastError = err.Error()
 		return
@@ -168,7 +178,10 @@ func (ui *uiState) refreshPreview(ctx context.Context) {
 		return
 	}
 
-	text, err := tmux.CapturePaneStyled(ctx, target, 200)
+	_, height := ui.terminal.Size()
+	captureLines := maxInt(20, height-3)
+
+	text, err := tmux.CapturePaneStyled(ctx, target, captureLines)
 	if err != nil {
 		ui.lastError = err.Error()
 		return
@@ -393,7 +406,6 @@ func (ui *uiState) forwardNamedKey(ctx context.Context, keyName string) {
 		return
 	}
 	ui.lastError = ""
-	ui.refreshPreview(ctx)
 }
 
 func (ui *uiState) forwardLiteral(ctx context.Context, text string) {
@@ -406,7 +418,35 @@ func (ui *uiState) forwardLiteral(ctx context.Context, text string) {
 		return
 	}
 	ui.lastError = ""
-	ui.refreshPreview(ctx)
+}
+
+func startBackgroundReconcile(ctx context.Context, interval time.Duration) <-chan error {
+	done := make(chan error, 1)
+	go func() {
+		defer close(done)
+
+		timer := time.NewTimer(0)
+		defer timer.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-timer.C:
+			}
+
+			_, err := app.ReconcileDefault(ctx)
+			select {
+			case <-ctx.Done():
+				return
+			case done <- err:
+			default:
+			}
+
+			timer.Reset(interval)
+		}
+	}()
+	return done
 }
 
 type segment struct {
