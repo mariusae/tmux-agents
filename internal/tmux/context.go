@@ -10,10 +10,11 @@ import (
 )
 
 type ContextInfo struct {
-	Session string
-	Window  string
-	Pane    string
-	PaneID  string
+	Session    string
+	Window     string
+	WindowName string
+	Pane       string
+	PaneID     string
 }
 
 func DiscoverCurrentContext(ctx context.Context) (ContextInfo, error) {
@@ -29,7 +30,7 @@ func DiscoverCurrentContext(ctx context.Context) (ContextInfo, error) {
 		"-p",
 		"-t",
 		paneID,
-		"#{session_name}\t#{window_index}\t#{pane_index}\t#{pane_id}",
+		"#{session_name}\t#{window_index}\t#{window_name}\t#{pane_index}\t#{pane_id}",
 	)
 
 	var stdout bytes.Buffer
@@ -45,14 +46,15 @@ func DiscoverCurrentContext(ctx context.Context) (ContextInfo, error) {
 	}
 
 	parts := strings.Split(strings.TrimSpace(stdout.String()), "\t")
-	if len(parts) != 4 {
+	if len(parts) != 5 {
 		return ContextInfo{}, nil
 	}
 
 	return ContextInfo{
-		Session: parts[0],
-		Window:  parts[1],
-		Pane:    parts[2],
-		PaneID:  parts[3],
+		Session:    parts[0],
+		Window:     parts[1],
+		WindowName: parts[2],
+		Pane:       parts[3],
+		PaneID:     parts[4],
 	}, nil
 }

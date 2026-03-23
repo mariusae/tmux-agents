@@ -13,6 +13,7 @@ import (
 type Pane struct {
 	Session        string
 	Window         string
+	WindowName     string
 	Pane           string
 	PaneID         string
 	PanePID        int
@@ -26,7 +27,7 @@ func ListPanes(ctx context.Context) ([]Pane, error) {
 		"list-panes",
 		"-a",
 		"-F",
-		"#{session_name}\t#{window_index}\t#{pane_index}\t#{pane_id}\t#{pane_pid}\t#{pane_current_command}",
+		"#{session_name}\t#{window_index}\t#{window_name}\t#{pane_index}\t#{pane_id}\t#{pane_pid}\t#{pane_current_command}",
 	)
 
 	var stdout bytes.Buffer
@@ -52,12 +53,12 @@ func ListPanes(ctx context.Context) ([]Pane, error) {
 	lines := strings.Split(text, "\n")
 	panes := make([]Pane, 0, len(lines))
 	for _, line := range lines {
-		parts := strings.SplitN(line, "\t", 6)
-		if len(parts) != 6 {
+		parts := strings.SplitN(line, "\t", 7)
+		if len(parts) != 7 {
 			continue
 		}
 
-		panePID, err := strconv.Atoi(parts[4])
+		panePID, err := strconv.Atoi(parts[5])
 		if err != nil {
 			panePID = 0
 		}
@@ -65,10 +66,11 @@ func ListPanes(ctx context.Context) ([]Pane, error) {
 		panes = append(panes, Pane{
 			Session:        parts[0],
 			Window:         parts[1],
-			Pane:           parts[2],
-			PaneID:         parts[3],
+			WindowName:     parts[2],
+			Pane:           parts[3],
+			PaneID:         parts[4],
 			PanePID:        panePID,
-			CurrentCommand: parts[5],
+			CurrentCommand: parts[6],
 		})
 	}
 

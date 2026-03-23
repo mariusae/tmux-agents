@@ -52,6 +52,7 @@ type Event struct {
 	ProviderSessionID string            `json:"provider_session_id"`
 	TmuxSession       string            `json:"tmux_session,omitempty"`
 	TmuxWindow        string            `json:"tmux_window,omitempty"`
+	TmuxWindowName    string            `json:"tmux_window_name,omitempty"`
 	TmuxPane          string            `json:"tmux_pane,omitempty"`
 	Kind              EventKind         `json:"kind"`
 	Message           string            `json:"message,omitempty"`
@@ -72,6 +73,7 @@ type Agent struct {
 	ProviderSessionID string     `json:"provider_session_id"`
 	TmuxSession       string     `json:"tmux_session,omitempty"`
 	TmuxWindow        string     `json:"tmux_window,omitempty"`
+	TmuxWindowName    string     `json:"tmux_window_name,omitempty"`
 	TmuxPane          string     `json:"tmux_pane,omitempty"`
 	State             AgentState `json:"state"`
 	AwaitingInput     bool       `json:"awaiting_input"`
@@ -79,6 +81,7 @@ type Agent struct {
 	LastEventAt       time.Time  `json:"last_event_at"`
 	LastActiveAt      time.Time  `json:"last_active_at"`
 	LastSeenAt        time.Time  `json:"last_seen_at"`
+	StateChangedAt    time.Time  `json:"state_changed_at"`
 	ReconcileSource   string     `json:"reconcile_source,omitempty"`
 }
 
@@ -102,7 +105,11 @@ func (a Agent) TargetLabel() string {
 	if session == "" || window == "" || pane == "" {
 		return ""
 	}
-	return fmt.Sprintf("%s:%s.%s", session, window, pane)
+	windowDisplay := window
+	if name := strings.TrimSpace(a.TmuxWindowName); name != "" {
+		windowDisplay = name
+	}
+	return fmt.Sprintf("%s:%s.%s", session, windowDisplay, pane)
 }
 
 func (a Agent) LocationLabel() string {
@@ -216,6 +223,9 @@ func ApplyEvent(agent Agent, event Event) Agent {
 	if event.TmuxWindow != "" {
 		agent.TmuxWindow = event.TmuxWindow
 	}
+	if event.TmuxWindowName != "" {
+		agent.TmuxWindowName = event.TmuxWindowName
+	}
 	if event.TmuxPane != "" {
 		agent.TmuxPane = event.TmuxPane
 	}
@@ -223,6 +233,8 @@ func ApplyEvent(agent Agent, event Event) Agent {
 		agent.LastEventAt = event.Time
 		agent.LastSeenAt = event.Time
 	}
+
+	prevState := agent.State
 
 	switch event.Kind {
 	case EventKindPromptSubmitted, EventKindToolStarted, EventKindLiveDetected, EventKindStateRunning:
@@ -261,6 +273,10 @@ func ApplyEvent(agent Agent, event Event) Agent {
 
 	if agent.State == "" {
 		agent.State = AgentStateUnknown
+	}
+
+	if agent.State != prevState && !event.Time.IsZero() {
+		agent.StateChangedAt = event.Time
 	}
 
 	if event.Source == EventSourceReconcile {

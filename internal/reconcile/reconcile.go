@@ -140,6 +140,7 @@ func CaptureWithProfile(ctx context.Context) (Snapshot, Profile, error) {
 					ProviderSessionID: syntheticSessionID(pane),
 					TmuxSession:       pane.Session,
 					TmuxWindow:        pane.Window,
+					TmuxWindowName:    pane.WindowName,
 					TmuxPane:          pane.Pane,
 					Kind:              kind,
 					Message:           message,
@@ -215,6 +216,7 @@ func Apply(ctx context.Context, st store.Store, snapshot Snapshot) (Result, erro
 			ProviderSessionID: agent.ProviderSessionID,
 			TmuxSession:       agent.TmuxSession,
 			TmuxWindow:        agent.TmuxWindow,
+			TmuxWindowName:    agent.TmuxWindowName,
 			TmuxPane:          agent.TmuxPane,
 			Kind:              model.EventKindLiveMissing,
 			Message:           "agent no longer detected in live tmux scan",
@@ -257,6 +259,7 @@ func detectLiveAgent(ctx context.Context, pane tmux.Pane) (model.Event, bool) {
 		ProviderSessionID: syntheticSessionID(pane),
 		TmuxSession:       pane.Session,
 		TmuxWindow:        pane.Window,
+		TmuxWindowName:    pane.WindowName,
 		TmuxPane:          pane.Pane,
 		Kind:              kind,
 		Message:           message,
@@ -295,7 +298,7 @@ func needsLiveUpdate(existing model.Agent, liveEvent model.Event, exists bool) b
 	if existing.State != expectedStateForEvent(liveEvent.Kind) || !existing.Live {
 		return true
 	}
-	if existing.TmuxSession != liveEvent.TmuxSession || existing.TmuxWindow != liveEvent.TmuxWindow || existing.TmuxPane != liveEvent.TmuxPane {
+	if existing.TmuxSession != liveEvent.TmuxSession || existing.TmuxWindow != liveEvent.TmuxWindow || existing.TmuxWindowName != liveEvent.TmuxWindowName || existing.TmuxPane != liveEvent.TmuxPane {
 		return true
 	}
 	return false

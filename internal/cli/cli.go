@@ -354,7 +354,11 @@ func eventTargetLabel(event model.Event) string {
 	if session == "" || window == "" || pane == "" || strings.HasPrefix(pane, "%") {
 		return ""
 	}
-	return fmt.Sprintf("%s:%s.%s", session, window, pane)
+	windowDisplay := window
+	if name := strings.TrimSpace(event.TmuxWindowName); name != "" {
+		windowDisplay = name
+	}
+	return fmt.Sprintf("%s:%s.%s", session, windowDisplay, pane)
 }
 
 func formatShowTime(now, t time.Time) string {

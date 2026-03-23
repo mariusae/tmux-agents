@@ -97,6 +97,7 @@ func (a *App) Record(ctx context.Context, req RecordRequest) (model.Event, model
 		ProviderSessionID: normalizeProviderSessionID(strings.TrimSpace(req.ProviderSessionID), tmuxInfo.PaneID),
 		TmuxSession:       tmuxInfo.Session,
 		TmuxWindow:        tmuxInfo.Window,
+		TmuxWindowName:    tmuxInfo.WindowName,
 		TmuxPane:          tmuxInfo.Pane,
 		Kind:              kind,
 		Message:           strings.TrimSpace(req.Message),
@@ -206,6 +207,9 @@ func defaultDBPath() (string, error) {
 }
 
 func lastSortTime(agent model.Agent) time.Time {
+	if !agent.StateChangedAt.IsZero() {
+		return agent.StateChangedAt
+	}
 	return agent.LastActivityAt()
 }
 
