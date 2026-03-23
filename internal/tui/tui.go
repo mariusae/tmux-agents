@@ -338,12 +338,8 @@ func (ui *uiState) renderSidebar(width, height int, now time.Time) []string {
 		case agent.State == model.AgentStateIdle:
 			stateIndicator = "○"
 		}
-		activityMark := ""
-		if !agent.LastActiveAt.IsZero() && now.Sub(agent.LastActiveAt) < 30*time.Second {
-			activityMark = "↯"
-		}
 		lines[row] = renderEdgeLine(width, rowStyle,
-			segment{text: " " + stateIndicator + activityMark + agent.Label(), style: textStyle{bold: agent.AwaitingInput}},
+			segment{text: " " + stateIndicator + " " + agent.Label(), style: textStyle{bold: agent.AwaitingInput}},
 			segment{text: " " + active + " ", style: textStyle{fg: ui.theme.mutedFG, dim: true}},
 		)
 		row++
