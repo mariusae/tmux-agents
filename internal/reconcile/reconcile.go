@@ -18,12 +18,44 @@ type Result struct {
 	Missing int
 }
 
-func Run(ctx context.Context, st store.Store) (Result, error) {
-	now := time.Now().UTC()
+type Snapshot struct {
+	CapturedAt time.Time
+	LiveEvents []model.Event
+}
 
-	panes, err := tmux.ListPanes(ctx)
+func Run(ctx context.Context, st store.Store) (Result, error) {
+	snapshot, err := Capture(ctx)
 	if err != nil {
 		return Result{}, err
+	}
+	return Apply(ctx, st, snapshot)
+}
+
+func Capture(ctx context.Context) (Snapshot, error) {
+	panes, err := tmux.ListPanes(ctx)
+	if err != nil {
+		return Snapshot{}, err
+	}
+
+	snapshot := Snapshot{
+		CapturedAt: time.Now().UTC(),
+		LiveEvents: make([]model.Event, 0, len(panes)),
+	}
+
+	for _, pane := range panes {
+		liveAgent, ok := detectLiveAgent(ctx, pane)
+		if !ok {
+			continue
+		}
+		snapshot.LiveEvents = append(snapshot.LiveEvents, liveAgent)
+	}
+	return snapshot, nil
+}
+
+func Apply(ctx context.Context, st store.Store, snapshot Snapshot) (Result, error) {
+	now := snapshot.CapturedAt
+	if now.IsZero() {
+		now = time.Now().UTC()
 	}
 
 	agents, err := st.ListAgents(ctx)
@@ -36,24 +68,18 @@ func Run(ctx context.Context, st store.Store) (Result, error) {
 		agentByKey[agent.Key] = agent
 	}
 
-	result := Result{}
-	liveKeys := make(map[string]struct{})
+	result := Result{Seen: len(snapshot.LiveEvents)}
+	liveKeys := make(map[string]struct{}, len(snapshot.LiveEvents))
 
-	for _, pane := range panes {
-		liveAgent, ok := detectLiveAgent(ctx, pane)
-		if !ok {
+	for _, liveEvent := range snapshot.LiveEvents {
+		liveKeys[liveEvent.AgentKey()] = struct{}{}
+
+		existing, exists := agentByKey[liveEvent.AgentKey()]
+		if !needsLiveUpdate(existing, liveEvent, exists) {
 			continue
 		}
 
-		result.Seen++
-		liveKeys[liveAgent.AgentKey()] = struct{}{}
-
-		existing, exists := agentByKey[liveAgent.AgentKey()]
-		if !needsLiveUpdate(existing, liveAgent, exists) {
-			continue
-		}
-
-		if _, _, err := st.RecordEvent(ctx, liveAgent); err != nil {
+		if _, _, err := st.RecordEvent(ctx, liveEvent); err != nil {
 			return result, err
 		}
 		result.Updated++

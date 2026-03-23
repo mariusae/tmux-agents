@@ -180,12 +180,17 @@ func (a *App) Reconcile(ctx context.Context) (reconcile.Result, error) {
 }
 
 func ReconcileDefault(ctx context.Context) (reconcile.Result, error) {
+	snapshot, err := reconcile.Capture(ctx)
+	if err != nil {
+		return reconcile.Result{}, err
+	}
+
 	application, err := OpenDefault()
 	if err != nil {
 		return reconcile.Result{}, err
 	}
 	defer application.Close()
-	return application.Reconcile(ctx)
+	return reconcile.Apply(ctx, application.store, snapshot)
 }
 
 func defaultDBPath() (string, error) {

@@ -11,6 +11,13 @@ import (
 	"github.com/mariusae/tmux-agents/internal/store"
 )
 
+func disableLiveTmux(t *testing.T) {
+	t.Helper()
+	t.Setenv("PATH", t.TempDir())
+	t.Setenv("TMUX", "")
+	t.Setenv("TMUX_PANE", "")
+}
+
 func TestFormatShowTime(t *testing.T) {
 	loc := time.FixedZone("test", -5*60*60)
 	now := time.Date(2026, time.March, 23, 12, 0, 0, 0, loc)
@@ -41,6 +48,8 @@ func TestFormatShowTime(t *testing.T) {
 
 func TestRunStatusWithDelimiter(t *testing.T) {
 	ctx := context.Background()
+	disableLiveTmux(t)
+
 	dbPath := filepath.Join(t.TempDir(), "tmux-agents.db")
 	st, err := store.OpenBolt(dbPath)
 	if err != nil {
@@ -82,6 +91,8 @@ func TestRunStatusWithDelimiter(t *testing.T) {
 
 func TestRunStatusWithoutWaitingAgentsPrintsEmptyLine(t *testing.T) {
 	ctx := context.Background()
+	disableLiveTmux(t)
+
 	dbPath := filepath.Join(t.TempDir(), "tmux-agents.db")
 	st, err := store.OpenBolt(dbPath)
 	if err != nil {

@@ -54,13 +54,7 @@ func Run(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer)
 
 	switch args[0] {
 	case "status":
-		application, err := app.OpenDefault()
-		if err != nil {
-			_, _ = fmt.Fprintf(stderr, "open store: %v\n", err)
-			return 1
-		}
-		defer application.Close()
-		return runStatus(ctx, application, args[1:], stdout, stderr)
+		return runStatus(ctx, args[1:], stdout, stderr)
 	case "show":
 		application, err := app.OpenDefaultReadOnly()
 		if err != nil {
@@ -108,7 +102,7 @@ func Run(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer)
 	}
 }
 
-func runStatus(ctx context.Context, application *app.App, args []string, stdout io.Writer, stderr io.Writer) int {
+func runStatus(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer) int {
 	statusFlags := flag.NewFlagSet("status", flag.ContinueOnError)
 	statusFlags.SetOutput(stderr)
 	delimiter := statusFlags.String("d", "", "delimiter to append after non-empty status output")
@@ -116,7 +110,19 @@ func runStatus(ctx context.Context, application *app.App, args []string, stdout 
 		return 1
 	}
 
-	line, err := application.StatusLine(ctx)
+	if _, err := app.ReconcileDefault(ctx); err != nil {
+		_, _ = fmt.Fprintf(stderr, "status: %v\n", err)
+		return 1
+	}
+
+	application, err := app.OpenDefaultReadOnly()
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "open store: %v\n", err)
+		return 1
+	}
+	defer application.Close()
+
+	line, err := application.StatusLineSnapshot(ctx)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "status: %v\n", err)
 		return 1
