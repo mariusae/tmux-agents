@@ -129,6 +129,9 @@ func (a *App) StatusAgentsSnapshot(ctx context.Context) ([]model.Agent, error) {
 		if !agent.Live {
 			continue
 		}
+		if !agent.StateChangedAt.IsZero() && now.Sub(agent.StateChangedAt) >= 10*time.Minute {
+			continue
+		}
 		if agent.AwaitingInput {
 			notable = append(notable, agent)
 			continue
