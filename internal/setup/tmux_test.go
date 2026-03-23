@@ -16,27 +16,27 @@ func TestDesiredStatusRight(t *testing.T) {
 		{
 			name:    "prepend existing status",
 			current: "%m/%d %H:%M%z",
-			want:    "#(tmux-agents status -d \" • \")%m/%d %H:%M%z",
+			want:    "#(tmux-agents status)%m/%d %H:%M%z",
 		},
 		{
 			name:    "trim surrounding whitespace",
 			current: "   %H:%M   ",
-			want:    "#(tmux-agents status -d \" • \")%H:%M",
+			want:    "#(tmux-agents status)%H:%M",
 		},
 		{
 			name:    "already configured on left",
-			current: "#(tmux-agents status -d \" • \")%H:%M",
-			want:    "#(tmux-agents status -d \" • \")%H:%M",
+			current: "#(tmux-agents status)%H:%M",
+			want:    "#(tmux-agents status)%H:%M",
 		},
 		{
-			name:    "migrate legacy interpolation to left",
-			current: "%H:%M #(tmux-agents status)",
-			want:    "#(tmux-agents status -d \" • \")%H:%M",
+			name:    "migrate legacy interpolation",
+			current: "%H:%M #(tmux-agents status -d \" • \")",
+			want:    "#(tmux-agents status)%H:%M",
 		},
 		{
 			name:    "drop duplicate interpolations",
-			current: "#(tmux-agents status -d \" • \")%H:%M #(tmux-agents status)",
-			want:    "#(tmux-agents status -d \" • \")%H:%M",
+			current: "#(tmux-agents status)%H:%M #(tmux-agents status -d \" • \")",
+			want:    "#(tmux-agents status)%H:%M",
 		},
 	}
 

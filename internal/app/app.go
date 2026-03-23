@@ -201,13 +201,36 @@ func statusLineForAgents(agents []model.Agent) string {
 		return ""
 	}
 
-	labels := make([]string, 0, len(agents))
-	for _, agent := range agents {
+	// Most recent last.
+	var buf strings.Builder
+	for i := len(agents) - 1; i >= 0; i-- {
+		agent := agents[i]
 		indicator := StatusIndicator(agent)
-		labels = append(labels, indicator+agent.LocationLabel())
+		buf.WriteString(indicator)
+		buf.WriteString(agent.LocationLabel())
+		buf.WriteString(" ")
 	}
+	// Recency block based on the newest state change (last agent in reversed order).
+	buf.WriteString(recencyIndicator(agents[0]))
+	buf.WriteString(" ")
+	return buf.String()
+}
 
-	return strings.Join(labels, " ")
+func recencyIndicator(agent model.Agent) string {
+	if agent.StateChangedAt.IsZero() {
+		return "░"
+	}
+	age := time.Since(agent.StateChangedAt)
+	switch {
+	case age < 1*time.Minute:
+		return "░"
+	case age < 3*time.Minute:
+		return "▒"
+	case age < 10*time.Minute:
+		return "▓"
+	default:
+		return "█"
+	}
 }
 
 func StatusIndicator(agent model.Agent) string {

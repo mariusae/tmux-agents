@@ -11,8 +11,8 @@ import (
 )
 
 const (
-	StatusInterpolation       = "#(tmux-agents status -d \" • \")"
-	legacyStatusInterpolation = "#(tmux-agents status)"
+	StatusInterpolation       = "#(tmux-agents status)"
+	legacyStatusInterpolation = "#(tmux-agents status -d \" • \")"
 	RecommendedInterval       = 1
 	PopupCommand              = `tmux display-popup -E "tmux-agents"`
 	PopupBinding              = `bind-key C-g display-popup -E -w 90% -h 90% "tmux-agents"`

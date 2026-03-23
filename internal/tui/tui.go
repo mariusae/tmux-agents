@@ -158,6 +158,10 @@ func (ui *uiState) refreshAgents(ctx context.Context) {
 		return
 	}
 
+	// Reverse so most recent state change is at the bottom.
+	for i, j := 0, len(agents)-1; i < j; i, j = i+1, j-1 {
+		agents[i], agents[j] = agents[j], agents[i]
+	}
 	ui.agents = agents
 	ui.lastError = ""
 
@@ -299,7 +303,7 @@ func (ui *uiState) renderFooter(width int) string {
 	return fillStyledLine(message, width, style)
 }
 
-func (ui *uiState) renderSidebar(width, height int, now time.Time) []string {
+func (ui *uiState) renderSidebar(width, height int, _ time.Time) []string {
 	lines := make([]string, height)
 	base := textStyle{}
 
@@ -328,7 +332,7 @@ func (ui *uiState) renderSidebar(width, height int, now time.Time) []string {
 			}
 		}
 
-		active := formatActiveTime(now, agent.LastActivityAt())
+		block := agentRecencyBlock(agent)
 		stateIndicator := " "
 		switch {
 		case agent.AwaitingInput:
@@ -338,10 +342,7 @@ func (ui *uiState) renderSidebar(width, height int, now time.Time) []string {
 		case agent.State == model.AgentStateIdle:
 			stateIndicator = "○"
 		}
-		lines[row] = renderEdgeLine(width, rowStyle,
-			segment{text: " " + stateIndicator + " " + agent.Label(), style: textStyle{bold: agent.AwaitingInput}},
-			segment{text: " " + active + " ", style: textStyle{fg: ui.theme.mutedFG, dim: true}},
-		)
+		lines[row] = fillStyledLine(" "+block+" "+stateIndicator+" "+agent.Label(), width, mergeStyle(rowStyle, textStyle{bold: agent.AwaitingInput}))
 		row++
 	}
 
@@ -352,7 +353,7 @@ func (ui *uiState) renderSidebar(width, height int, now time.Time) []string {
 	return lines
 }
 
-func (ui *uiState) renderPreviewPane(width, height int, now time.Time) []string {
+func (ui *uiState) renderPreviewPane(width, height int, _ time.Time) []string {
 	lines := make([]string, height)
 	if height == 0 {
 		return lines
@@ -406,10 +407,15 @@ func (ui *uiState) renderTopBorder(leftWidth, rightWidth int, now time.Time) str
 	left := titledBorderSection(" INBOX ", leftWidth)
 
 	rightTitle := " PREVIEW "
-	if target := ui.selectedTarget(); target != "" {
+	if agent := ui.selectedAgent(); agent.Key != "" {
+		target := agent.TargetLabel()
 		rightTitle = " " + target + " "
+		ts := formatActiveTime(now, agent.StateChangedAt)
+		if ts != "" && ts != "-" {
+			rightTitle = " " + target + " " + ts + " "
+		}
 		if !ui.previewAt.IsZero() && now.Sub(ui.previewAt) > 5*time.Second && ui.previewFor == target {
-			rightTitle = " " + target + " (stale) "
+			rightTitle += "(stale) "
 		}
 	}
 	right := titledBorderSection(rightTitle, rightWidth)
@@ -530,44 +536,6 @@ func startBackgroundReconcile(ctx context.Context, interval time.Duration) <-cha
 		}
 	}()
 	return done
-}
-
-type segment struct {
-	text  string
-	style textStyle
-}
-
-func renderEdgeLine(width int, base textStyle, left, right segment) string {
-	leftText := truncateText(left.text, width)
-	rightText := truncateText(right.text, maxInt(0, width-len([]rune(leftText))))
-	gap := maxInt(0, width-len([]rune(leftText))-len([]rune(rightText)))
-	segments := []segment{
-		{text: leftText, style: left.style},
-		{text: strings.Repeat(" ", gap), style: textStyle{}},
-		{text: rightText, style: right.style},
-	}
-	return renderLineSegments(width, base, segments)
-}
-
-func renderLineSegments(width int, base textStyle, segments []segment) string {
-	var b strings.Builder
-	remaining := width
-	for _, seg := range segments {
-		if remaining <= 0 {
-			break
-		}
-		text := truncateText(seg.text, remaining)
-		remaining -= len([]rune(text))
-		style := mergeStyle(base, seg.style)
-		b.WriteString(styleSequence(style))
-		b.WriteString(text)
-	}
-	if remaining > 0 {
-		b.WriteString(styleSequence(base))
-		b.WriteString(strings.Repeat(" ", remaining))
-	}
-	b.WriteString(resetSequence())
-	return b.String()
 }
 
 func fillStyledLine(text string, width int, style textStyle) string {
@@ -736,6 +704,23 @@ func maxInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func agentRecencyBlock(agent model.Agent) string {
+	if agent.StateChangedAt.IsZero() {
+		return "░"
+	}
+	age := time.Since(agent.StateChangedAt)
+	switch {
+	case age < 1*time.Minute:
+		return "░"
+	case age < 3*time.Minute:
+		return "▒"
+	case age < 10*time.Minute:
+		return "▓"
+	default:
+		return "█"
+	}
 }
 
 func formatActiveTime(now, t time.Time) string {

@@ -90,7 +90,7 @@ func TestStatusLineShowsWaitingAndRecentlyIdleAgents(t *testing.T) {
 		t.Fatalf("StatusLine returned error: %v", err)
 	}
 
-	want := "○misc:7.1 ❯proj:1.2 ❯ion:3.0"
+	want := "❯ion:3.0 ❯proj:1.2 ○misc:7.1 ░ "
 	if line != want {
 		t.Fatalf("StatusLine() = %q, want %q", line, want)
 	}

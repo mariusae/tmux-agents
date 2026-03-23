@@ -46,7 +46,7 @@ func TestFormatShowTime(t *testing.T) {
 	}
 }
 
-func TestRunStatusWithDelimiter(t *testing.T) {
+func TestRunStatusOutput(t *testing.T) {
 	ctx := context.Background()
 	disableLiveTmux(t)
 
@@ -80,16 +80,17 @@ func TestRunStatusWithDelimiter(t *testing.T) {
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	if code := Run(ctx, []string{"status", "-d", " • "}, &stdout, &stderr); code != 0 {
+	if code := Run(ctx, []string{"status"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("runStatus() code = %d, stderr = %q", code, stderr.String())
 	}
 
-	if got := stdout.String(); got != "❯ion:3.0 • \n" {
-		t.Fatalf("runStatus() output = %q, want %q", got, "❯ion:3.0 • \n")
+	want := "❯ion:3.0 ░ "
+	if got := stdout.String(); got != want {
+		t.Fatalf("runStatus() output = %q, want %q", got, want)
 	}
 }
 
-func TestRunStatusWithoutWaitingAgentsPrintsEmptyLine(t *testing.T) {
+func TestRunStatusEmptyWhenNoNotableAgents(t *testing.T) {
 	ctx := context.Background()
 	disableLiveTmux(t)
 
@@ -123,11 +124,11 @@ func TestRunStatusWithoutWaitingAgentsPrintsEmptyLine(t *testing.T) {
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	if code := Run(ctx, []string{"status", "-d", " • "}, &stdout, &stderr); code != 0 {
+	if code := Run(ctx, []string{"status"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("runStatus() code = %d, stderr = %q", code, stderr.String())
 	}
 
-	if got := stdout.String(); got != "\n" {
-		t.Fatalf("runStatus() output = %q, want empty line", got)
+	if got := stdout.String(); got != "" {
+		t.Fatalf("runStatus() output = %q, want empty string", got)
 	}
 }
