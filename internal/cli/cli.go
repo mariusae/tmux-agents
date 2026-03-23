@@ -12,6 +12,7 @@ import (
 	"github.com/mariusae/tmux-agents/internal/app"
 	"github.com/mariusae/tmux-agents/internal/hook"
 	"github.com/mariusae/tmux-agents/internal/model"
+	"github.com/mariusae/tmux-agents/internal/reconcile"
 	"github.com/mariusae/tmux-agents/internal/setup"
 	"github.com/mariusae/tmux-agents/internal/tui"
 )
@@ -42,6 +43,8 @@ func Run(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer)
 			return 1
 		}
 		return 0
+	case "-profile":
+		return runProfile(ctx, stdout, stderr)
 	case "setup":
 		return runSetup(ctx, stdout, stderr)
 	case "show-setup":
@@ -391,6 +394,44 @@ func formatShowTime(now, t time.Time) string {
 	return t.Format("02Jan06")
 }
 
+func runProfile(ctx context.Context, stdout io.Writer, stderr io.Writer) int {
+	_, prof, err := reconcile.CaptureWithProfile(ctx)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "profile: %v\n", err)
+		return 1
+	}
+
+	_, _ = fmt.Fprintln(stdout, "tmux-agents profile")
+	_, _ = fmt.Fprintln(stdout)
+	_, _ = fmt.Fprintf(stdout, "reconcile:\n")
+	_, _ = fmt.Fprintf(stdout, "  total=%s\n", formatDuration(prof.Total))
+	_, _ = fmt.Fprintf(stdout, "  list_panes=%s (%d panes)\n", formatDuration(prof.ListPanes), prof.PaneCount)
+	detectTotal := prof.Total - prof.ListPanes
+	_, _ = fmt.Fprintf(stdout, "  detect_agents=%s (%d agents detected)\n", formatDuration(detectTotal), prof.AgentCount)
+	_, _ = fmt.Fprintln(stdout)
+	_, _ = fmt.Fprintf(stdout, "per_pane:\n")
+	for _, pp := range prof.PaneProfiles {
+		captureTail := "-"
+		if pp.CaptureTail > 0 {
+			captureTail = formatDuration(pp.CaptureTail)
+		}
+		detected := "false"
+		if pp.Detected {
+			detected = "true"
+		}
+		_, _ = fmt.Fprintf(stdout, "  %-8s descendant_cmds=%-10s capture_tail=%-10s detected=%s\n",
+			pp.PaneID, formatDuration(pp.DescendantCmds), captureTail, detected)
+	}
+	return 0
+}
+
+func formatDuration(d time.Duration) string {
+	if d < time.Millisecond {
+		return fmt.Sprintf("%.1fus", float64(d.Microseconds()))
+	}
+	return fmt.Sprintf("%.1fms", float64(d.Microseconds())/1000)
+}
+
 func printRootPlaceholder(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "tui not implemented yet")
 	_, _ = fmt.Fprintln(w, "use: tmux-agents status | show | show-setup | setup | install-hooks | uninstall-hooks | hook | record | log | reconcile")
@@ -401,6 +442,7 @@ func printUsage(w io.Writer) {
 	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintln(w, "Commands:")
 	_, _ = fmt.Fprintln(w, "  -rage")
+	_, _ = fmt.Fprintln(w, "  -profile")
 	_, _ = fmt.Fprintln(w, "  setup")
 	_, _ = fmt.Fprintln(w, "  status [-d delimiter]")
 	_, _ = fmt.Fprintln(w, "  show")

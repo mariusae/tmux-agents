@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mariusae/tmux-agents/internal/model"
@@ -23,6 +24,21 @@ type Snapshot struct {
 	LiveEvents []model.Event
 }
 
+type Profile struct {
+	Total        time.Duration
+	ListPanes    time.Duration
+	PaneCount    int
+	AgentCount   int
+	PaneProfiles []PaneProfile
+}
+
+type PaneProfile struct {
+	PaneID         string
+	DescendantCmds time.Duration
+	CaptureTail    time.Duration // zero if no agent detected
+	Detected       bool
+}
+
 func Run(ctx context.Context, st store.Store) (Result, error) {
 	snapshot, err := Capture(ctx)
 	if err != nil {
@@ -37,19 +53,119 @@ func Capture(ctx context.Context) (Snapshot, error) {
 		return Snapshot{}, err
 	}
 
+	type paneResult struct {
+		event model.Event
+		ok    bool
+	}
+	results := make([]paneResult, len(panes))
+
+	var wg sync.WaitGroup
+	wg.Add(len(panes))
+	for i, pane := range panes {
+		go func(i int, pane tmux.Pane) {
+			defer wg.Done()
+			event, ok := detectLiveAgent(ctx, pane)
+			results[i] = paneResult{event, ok}
+		}(i, pane)
+	}
+	wg.Wait()
+
 	snapshot := Snapshot{
 		CapturedAt: time.Now().UTC(),
 		LiveEvents: make([]model.Event, 0, len(panes)),
 	}
-
-	for _, pane := range panes {
-		liveAgent, ok := detectLiveAgent(ctx, pane)
-		if !ok {
-			continue
+	for _, r := range results {
+		if r.ok {
+			snapshot.LiveEvents = append(snapshot.LiveEvents, r.event)
 		}
-		snapshot.LiveEvents = append(snapshot.LiveEvents, liveAgent)
 	}
 	return snapshot, nil
+}
+
+func CaptureWithProfile(ctx context.Context) (Snapshot, Profile, error) {
+	var prof Profile
+	totalStart := time.Now()
+
+	listStart := time.Now()
+	panes, err := tmux.ListPanes(ctx)
+	prof.ListPanes = time.Since(listStart)
+	if err != nil {
+		return Snapshot{}, prof, err
+	}
+	prof.PaneCount = len(panes)
+
+	type profileResult struct {
+		pp    PaneProfile
+		event model.Event
+		ok    bool
+	}
+	results := make([]profileResult, len(panes))
+
+	var wg sync.WaitGroup
+	wg.Add(len(panes))
+	for i, pane := range panes {
+		go func(i int, pane tmux.Pane) {
+			defer wg.Done()
+			pp := PaneProfile{PaneID: pane.PaneID}
+
+			cmdStart := time.Now()
+			commands, err := process.DescendantCommands(ctx, pane.PanePID)
+			pp.DescendantCmds = time.Since(cmdStart)
+			if err != nil {
+				results[i] = profileResult{pp: pp}
+				return
+			}
+
+			provider := detectProvider(pane.CurrentCommand, commands)
+			if provider == "" {
+				results[i] = profileResult{pp: pp}
+				return
+			}
+
+			tailStart := time.Now()
+			tail, err := tmux.CapturePaneTail(ctx, pane.PaneID, 40)
+			pp.CaptureTail = time.Since(tailStart)
+			if err != nil {
+				results[i] = profileResult{pp: pp}
+				return
+			}
+
+			pp.Detected = true
+			kind, message := classifyLiveState(provider, tail)
+			results[i] = profileResult{
+				pp: pp,
+				event: model.Event{
+					Time:              time.Now().UTC(),
+					Provider:          provider,
+					ProviderSessionID: syntheticSessionID(pane),
+					TmuxSession:       pane.Session,
+					TmuxWindow:        pane.Window,
+					TmuxPane:          pane.Pane,
+					Kind:              kind,
+					Message:           message,
+					Source:            model.EventSourceReconcile,
+				},
+				ok: true,
+			}
+		}(i, pane)
+	}
+	wg.Wait()
+
+	snapshot := Snapshot{
+		CapturedAt: time.Now().UTC(),
+		LiveEvents: make([]model.Event, 0, len(panes)),
+	}
+	prof.PaneProfiles = make([]PaneProfile, 0, len(panes))
+	for _, r := range results {
+		prof.PaneProfiles = append(prof.PaneProfiles, r.pp)
+		if r.ok {
+			snapshot.LiveEvents = append(snapshot.LiveEvents, r.event)
+			prof.AgentCount++
+		}
+	}
+
+	prof.Total = time.Since(totalStart)
+	return snapshot, prof, nil
 }
 
 func Apply(ctx context.Context, st store.Store, snapshot Snapshot) (Result, error) {
