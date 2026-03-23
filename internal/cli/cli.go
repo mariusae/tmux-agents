@@ -54,7 +54,7 @@ func Run(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer)
 
 	switch args[0] {
 	case "status":
-		application, err := app.OpenDefaultReadOnly()
+		application, err := app.OpenDefault()
 		if err != nil {
 			_, _ = fmt.Fprintf(stderr, "open store: %v\n", err)
 			return 1
@@ -116,7 +116,7 @@ func runStatus(ctx context.Context, application *app.App, args []string, stdout 
 		return 1
 	}
 
-	line, err := application.StatusLineSnapshot(ctx)
+	line, err := application.StatusLine(ctx)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "status: %v\n", err)
 		return 1
