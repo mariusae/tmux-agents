@@ -63,6 +63,13 @@ func detectCapabilityFromEnv() colorCapability {
 	case strings.Contains(colorterm, "truecolor"), strings.Contains(colorterm, "24bit"), strings.Contains(term, "direct"):
 		return capabilityTrueColor
 	case strings.Contains(term, "256color"):
+		// Inside tmux, the outer terminal almost always supports true
+		// color and tmux passes 24-bit sequences through. Without this,
+		// computed tint colors get approximated to the nearest xterm-256
+		// entry (e.g. #f4e7db → index 255 → #eeeeee).
+		if os.Getenv("TMUX") != "" {
+			return capabilityTrueColor
+		}
 		return capabilityANSI256
 	case term != "":
 		return capabilityANSI16
