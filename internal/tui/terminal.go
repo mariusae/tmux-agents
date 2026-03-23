@@ -1,10 +1,12 @@
 package tui
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
 	"strconv"
 	"strings"
@@ -67,16 +69,17 @@ type terminal struct {
 }
 
 type paletteProbe struct {
-	Foreground   *rgbColor
-	Background   *rgbColor
-	RawResponses []string
-	QueryWrapped bool
-	TTYOpened    bool
-	InputSource  string
-	OutputSource string
-	Capability   colorCapability
-	PaletteKnown bool
-	ProbeError   string
+	Foreground    *rgbColor
+	Background    *rgbColor
+	RawResponses  []string
+	PaletteSource string
+	QueryWrapped  bool
+	TTYOpened     bool
+	InputSource   string
+	OutputSource  string
+	Capability    colorCapability
+	PaletteKnown  bool
+	ProbeError    string
 }
 
 func openTerminal() (*terminal, error) {
@@ -174,10 +177,16 @@ func (t *terminal) redraw(frame string) error {
 }
 
 func (t *terminal) requestPalette() error {
-	if err := t.writeQuery(colorQuerySequence("10")); err != nil {
-		return err
-	}
-	return t.writeQuery(colorQuerySequence("11"))
+	go func() {
+		probe := probePalette(context.Background())
+		if probe.Foreground != nil {
+			t.emit(event{typ: eventColorQuery, kind: "10", color: *probe.Foreground})
+		}
+		if probe.Background != nil {
+			t.emit(event{typ: eventColorQuery, kind: "11", color: *probe.Background})
+		}
+	}()
+	return nil
 }
 
 func (t *terminal) write(text string) error {
@@ -425,14 +434,13 @@ func ignoreTerminalClose(err error) error {
 
 func probePalette(ctx context.Context) paletteProbe {
 	probe := paletteProbe{
-		QueryWrapped: false,
-		Capability:   detectCapabilityFromEnv(),
+		Capability: detectCapabilityFromEnv(),
 	}
 
 	input, inputSource, inputErr := openQueryInput()
 	if inputErr != nil {
 		probe.ProbeError = inputErr.Error()
-		return probe
+		return applyTmuxStyleFallback(ctx, probe)
 	}
 	probe.InputSource = inputSource
 	probe.TTYOpened = inputSource == "/dev/tty"
@@ -443,7 +451,7 @@ func probePalette(ctx context.Context) paletteProbe {
 	output, outputSource, outputErr := openQueryOutput()
 	if outputErr != nil {
 		probe.ProbeError = outputErr.Error()
-		return probe
+		return applyTmuxStyleFallback(ctx, probe)
 	}
 	probe.OutputSource = outputSource
 	if output != os.Stdout {
@@ -453,7 +461,7 @@ func probePalette(ctx context.Context) paletteProbe {
 	state, err := term.MakeRaw(int(input.Fd()))
 	if err != nil {
 		probe.ProbeError = err.Error()
-		return probe
+		return applyTmuxStyleFallback(ctx, probe)
 	}
 	defer term.Restore(int(input.Fd()), state)
 
@@ -482,11 +490,11 @@ func probePalette(ctx context.Context) paletteProbe {
 				probe.OutputSource = "stdout (fallback)"
 			} else {
 				probe.ProbeError = err.Error()
-				return probe
+				return applyTmuxStyleFallback(ctx, probe)
 			}
 		} else {
 			probe.ProbeError = err.Error()
-			return probe
+			return applyTmuxStyleFallback(ctx, probe)
 		}
 	}
 	if _, err := io.WriteString(output, colorQuerySequence("11")); err != nil {
@@ -495,11 +503,11 @@ func probePalette(ctx context.Context) paletteProbe {
 				probe.OutputSource = "stdout (fallback)"
 			} else {
 				probe.ProbeError = err.Error()
-				return probe
+				return applyTmuxStyleFallback(ctx, probe)
 			}
 		} else {
 			probe.ProbeError = err.Error()
-			return probe
+			return applyTmuxStyleFallback(ctx, probe)
 		}
 	}
 
@@ -512,12 +520,12 @@ func probePalette(ctx context.Context) paletteProbe {
 		select {
 		case <-ctx.Done():
 			probe.ProbeError = ctx.Err().Error()
-			return probe
+			return applyTmuxStyleFallback(ctx, probe)
 		case <-timeout.C:
 			if probe.Foreground == nil || probe.Background == nil {
 				probe.ProbeError = "timed out waiting for terminal color query response"
 			}
-			return finalizeProbe(probe)
+			return applyTmuxStyleFallback(ctx, probe)
 		case b := <-rawBytes:
 			responses, fg, bg := consumeProbeByte(rawBytes, b)
 			if len(responses) == 0 {
@@ -561,6 +569,115 @@ func openQueryOutput() (*os.File, string, error) {
 func finalizeProbe(probe paletteProbe) paletteProbe {
 	probe.PaletteKnown = probe.Background != nil
 	return probe
+}
+
+func applyTmuxStyleFallback(ctx context.Context, probe paletteProbe) paletteProbe {
+	if probe.Foreground != nil && probe.Background != nil {
+		return finalizeProbe(probe)
+	}
+
+	fg, bg, source := probePaletteFromTmuxStyles(ctx)
+	if fg != nil && probe.Foreground == nil {
+		probe.Foreground = fg
+	}
+	if bg != nil && probe.Background == nil {
+		probe.Background = bg
+	}
+	if source != "" {
+		probe.PaletteSource = source
+	}
+
+	return finalizeProbe(probe)
+}
+
+func probePaletteFromTmuxStyles(ctx context.Context) (*rgbColor, *rgbColor, string) {
+	if strings.TrimSpace(os.Getenv("TMUX")) == "" {
+		return nil, nil, ""
+	}
+
+	type styleProbe struct {
+		command []string
+		source  string
+	}
+
+	probes := []styleProbe{
+		{command: []string{"tmux", "show-options", "-gv", "popup-style"}, source: "tmux-style:popup-style"},
+		{command: []string{"tmux", "show-window-options", "-gv", "window-active-style"}, source: "tmux-style:window-active-style"},
+		{command: []string{"tmux", "show-window-options", "-gv", "window-style"}, source: "tmux-style:window-style"},
+		{command: []string{"tmux", "show-options", "-gv", "status-style"}, source: "tmux-style:status-style"},
+	}
+
+	for _, probe := range probes {
+		style, ok := runTmuxStyleCommand(ctx, probe.command)
+		if !ok {
+			continue
+		}
+		fg, bg := parseTmuxStyle(style)
+		if fg == nil && bg == nil {
+			continue
+		}
+		return fg, bg, probe.source
+	}
+
+	return nil, nil, ""
+}
+
+func runTmuxStyleCommand(ctx context.Context, args []string) (string, bool) {
+	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return "", false
+	}
+	return strings.TrimSpace(stdout.String()), true
+}
+
+func parseTmuxStyle(style string) (*rgbColor, *rgbColor) {
+	if strings.TrimSpace(style) == "" {
+		return nil, nil
+	}
+
+	var fg *rgbColor
+	var bg *rgbColor
+	for _, field := range strings.Split(style, ",") {
+		key, value, found := strings.Cut(strings.TrimSpace(field), "=")
+		if !found {
+			continue
+		}
+		color, ok := parseHexRGB(strings.TrimSpace(value))
+		if !ok {
+			continue
+		}
+		switch strings.TrimSpace(key) {
+		case "fg":
+			colorCopy := color
+			fg = &colorCopy
+		case "bg":
+			colorCopy := color
+			bg = &colorCopy
+		}
+	}
+	return fg, bg
+}
+
+func parseHexRGB(value string) (rgbColor, bool) {
+	value = strings.TrimSpace(value)
+	if !strings.HasPrefix(value, "#") || len(value) != 7 {
+		return rgbColor{}, false
+	}
+
+	n, err := strconv.ParseUint(value[1:], 16, 32)
+	if err != nil {
+		return rgbColor{}, false
+	}
+
+	return rgbColor{
+		R: uint8((n >> 16) & 0xff),
+		G: uint8((n >> 8) & 0xff),
+		B: uint8(n & 0xff),
+	}, true
 }
 
 func consumeProbeByte(rawBytes <-chan byte, first byte) ([]string, *rgbColor, *rgbColor) {

@@ -33,6 +33,7 @@ func Rage(ctx context.Context, w io.Writer) error {
 	_, _ = fmt.Fprintf(w, "palette:\n")
 	_, _ = fmt.Fprintf(w, "  foreground=%s\n", formatRGB(probe.Foreground))
 	_, _ = fmt.Fprintf(w, "  background=%s\n", formatRGB(probe.Background))
+	_, _ = fmt.Fprintf(w, "  source=%s\n", emptyAsUnknown(probe.PaletteSource))
 	if probe.Background != nil {
 		_, _ = fmt.Fprintf(w, "  background_luminance=%.2f\n", luminance(*probe.Background))
 		_, _ = fmt.Fprintf(w, "  background_classification=%s\n", classifyBackground(*probe.Background))
@@ -62,6 +63,8 @@ func Rage(ctx context.Context, w io.Writer) error {
 	switch {
 	case probe.Background == nil:
 		_, _ = fmt.Fprintf(w, "  background color query failed, so tint backgrounds fall back to terminal default\n")
+	case strings.HasPrefix(probe.PaletteSource, "tmux-style:"):
+		_, _ = fmt.Fprintf(w, "  background colors fell back to tmux style settings because live color queries did not return a background\n")
 	case probe.Capability < capabilityANSI256:
 		_, _ = fmt.Fprintf(w, "  terminal capability is below ansi256, so tint backgrounds fall back to terminal default\n")
 	case theme.selectedBG == nil:
