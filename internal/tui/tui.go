@@ -256,8 +256,12 @@ func (ui *uiState) renderSidebar(width, height int, now time.Time) []string {
 		}
 
 		active := formatActiveTime(now, agent.LastActivityAt())
+		indicator := " "
+		if !agent.LastActiveAt.IsZero() && now.Sub(agent.LastActiveAt) < 30*time.Second {
+			indicator = "↯"
+		}
 		lines[row] = renderEdgeLine(width, rowStyle,
-			segment{text: " " + agent.Label(), style: textStyle{bold: agent.AwaitingInput}},
+			segment{text: " " + indicator + agent.Label(), style: textStyle{bold: agent.AwaitingInput}},
 			segment{text: " " + active + " ", style: textStyle{fg: ui.theme.mutedFG, dim: true}},
 		)
 		row++
