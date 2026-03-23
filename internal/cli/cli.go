@@ -14,6 +14,7 @@ import (
 	"github.com/mariusae/tmux-agents/internal/model"
 	"github.com/mariusae/tmux-agents/internal/reconcile"
 	"github.com/mariusae/tmux-agents/internal/setup"
+	"github.com/mariusae/tmux-agents/internal/tmux"
 	"github.com/mariusae/tmux-agents/internal/tui"
 )
 
@@ -125,7 +126,8 @@ func runStatus(ctx context.Context, args []string, stdout io.Writer, stderr io.W
 	}
 	defer application.Close()
 
-	line, err := application.StatusLineSnapshot(ctx)
+	clientCtx, _ := tmux.DiscoverCurrentContext(ctx)
+	line, err := application.StatusLineSnapshot(ctx, clientCtx.Session, clientCtx.Window)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "status: %v\n", err)
 		return 1

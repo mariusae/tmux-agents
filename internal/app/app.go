@@ -178,10 +178,20 @@ func (a *App) StatusLine(ctx context.Context) (string, error) {
 	return statusLineForAgents(agents), nil
 }
 
-func (a *App) StatusLineSnapshot(ctx context.Context) (string, error) {
+func (a *App) StatusLineSnapshot(ctx context.Context, excludeSession, excludeWindow string) (string, error) {
 	agents, err := a.StatusAgentsSnapshot(ctx)
 	if err != nil {
 		return "", err
+	}
+	if excludeSession != "" {
+		filtered := agents[:0]
+		for _, agent := range agents {
+			if agent.TmuxSession == excludeSession && agent.TmuxWindow == excludeWindow {
+				continue
+			}
+			filtered = append(filtered, agent)
+		}
+		agents = filtered
 	}
 	return statusLineForAgents(agents), nil
 }
