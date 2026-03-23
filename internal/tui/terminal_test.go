@@ -1,6 +1,9 @@
 package tui
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestColorQuerySequenceIsPlainOSC(t *testing.T) {
 	got := colorQuerySequence("11")
@@ -34,5 +37,60 @@ func TestParseWrappedColorResponseFromTmuxDCS(t *testing.T) {
 	}
 	if color != (rgbColor{R: 0, G: 0, B: 255}) {
 		t.Fatalf("color = %#v, want %#v", color, rgbColor{R: 0, G: 0, B: 255})
+	}
+}
+
+func TestParseCSIArrowDown(t *testing.T) {
+	t.Parallel()
+
+	term := newTestTerminal()
+	term.rawBytes <- 'B'
+
+	term.parseCSI()
+
+	assertNextKeyEvent(t, term.events, keyDown)
+}
+
+func TestParseCSIArrowDownWithDoubleBracketPrefix(t *testing.T) {
+	t.Parallel()
+
+	term := newTestTerminal()
+	term.rawBytes <- '['
+	term.rawBytes <- 'B'
+
+	term.parseCSI()
+
+	assertNextKeyEvent(t, term.events, keyDown)
+}
+
+func TestParseSS3ArrowDown(t *testing.T) {
+	t.Parallel()
+
+	term := newTestTerminal()
+	term.rawBytes <- 'B'
+
+	term.parseSS3()
+
+	assertNextKeyEvent(t, term.events, keyDown)
+}
+
+func newTestTerminal() *terminal {
+	return &terminal{
+		events:   make(chan event, 4),
+		rawBytes: make(chan byte, 8),
+		done:     make(chan struct{}),
+	}
+}
+
+func assertNextKeyEvent(t *testing.T, events <-chan event, want keyCode) {
+	t.Helper()
+
+	select {
+	case ev := <-events:
+		if ev.typ != eventKey || ev.key != want {
+			t.Fatalf("event = %#v, want key %v", ev, want)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatalf("timed out waiting for key %v", want)
 	}
 }

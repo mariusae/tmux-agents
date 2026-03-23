@@ -40,7 +40,6 @@ const (
 	keyBackspace
 	keyLiteral
 	keyOpen
-	keyQuit
 )
 
 type event struct {
@@ -177,16 +176,21 @@ func (t *terminal) redraw(frame string) error {
 }
 
 func (t *terminal) requestPalette() error {
-	go func() {
-		probe := probePalette(context.Background())
-		if probe.Foreground != nil {
-			t.emit(event{typ: eventColorQuery, kind: "10", color: *probe.Foreground})
+	// Do not run a second live tty probe while the TUI is active: concurrent
+	// reads from the same terminal can steal bytes from key sequences.
+	if fg, bg, _ := probePaletteFromTmuxStyles(context.Background()); fg != nil || bg != nil {
+		if fg != nil {
+			t.emit(event{typ: eventColorQuery, kind: "10", color: *fg})
 		}
-		if probe.Background != nil {
-			t.emit(event{typ: eventColorQuery, kind: "11", color: *probe.Background})
+		if bg != nil {
+			t.emit(event{typ: eventColorQuery, kind: "11", color: *bg})
 		}
-	}()
-	return nil
+	}
+
+	if err := t.writeQuery(colorQuerySequence("10")); err != nil {
+		return err
+	}
+	return t.writeQuery(colorQuerySequence("11"))
 }
 
 func (t *terminal) write(text string) error {
@@ -262,8 +266,6 @@ func (t *terminal) parseLoop() {
 			return
 		case b := <-t.rawBytes:
 			switch b {
-			case 0x03:
-				t.emit(event{typ: eventKey, key: keyQuit})
 			case 0x0f:
 				t.emit(event{typ: eventKey, key: keyOpen})
 			case '\r', '\n':
@@ -284,7 +286,7 @@ func (t *terminal) parseLoop() {
 }
 
 func (t *terminal) parseEscape() {
-	next, ok := t.nextByte(25 * time.Millisecond)
+	next, ok := t.nextByte(100 * time.Millisecond)
 	if !ok {
 		t.emit(event{typ: eventKey, key: keyEscape})
 		return
@@ -295,22 +297,24 @@ func (t *terminal) parseEscape() {
 		t.parseCSI()
 	case ']':
 		t.parseOSC()
+	case 'O':
+		t.parseSS3()
 	case 'P':
 		t.parseDCS()
 	default:
-		t.emit(event{typ: eventKey, key: keyEscape})
+		return
 	}
 }
 
 func (t *terminal) parseCSI() {
 	sequence := make([]byte, 0, 8)
 	for {
-		b, ok := t.nextByte(50 * time.Millisecond)
+		b, ok := t.nextByte(100 * time.Millisecond)
 		if !ok {
 			return
 		}
 		sequence = append(sequence, b)
-		if b >= 0x40 && b <= 0x7e {
+		if b >= 0x40 && b <= 0x7e && !(len(sequence) == 1 && b == '[') {
 			break
 		}
 	}
@@ -319,7 +323,18 @@ func (t *terminal) parseCSI() {
 		return
 	}
 
-	final := sequence[len(sequence)-1]
+	emitCSIEvent(t, sequence[len(sequence)-1])
+}
+
+func (t *terminal) parseSS3() {
+	final, ok := t.nextByte(100 * time.Millisecond)
+	if !ok {
+		return
+	}
+	emitSS3Event(t, final)
+}
+
+func emitCSIEvent(t *terminal, final byte) {
 	switch final {
 	case 'A':
 		t.emit(event{typ: eventKey, key: keyUp})
@@ -329,6 +344,15 @@ func (t *terminal) parseCSI() {
 		t.emit(event{typ: eventFocusGained})
 	case 'O':
 		t.emit(event{typ: eventFocusLost})
+	}
+}
+
+func emitSS3Event(t *terminal, final byte) {
+	switch final {
+	case 'A':
+		t.emit(event{typ: eventKey, key: keyUp})
+	case 'B':
+		t.emit(event{typ: eventKey, key: keyDown})
 	}
 }
 

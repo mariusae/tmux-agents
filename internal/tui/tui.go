@@ -89,15 +89,9 @@ func Run(ctx context.Context, application *app.App) error {
 				case keyEnter:
 					ui.forwardNamedKey(ctx, "Enter")
 				case keyEscape:
-					ui.forwardNamedKey(ctx, "Escape")
-				case keyTab:
-					ui.forwardNamedKey(ctx, "Tab")
-				case keyBackspace:
-					ui.forwardNamedKey(ctx, "BSpace")
+					return nil
 				case keyLiteral:
 					ui.forwardLiteral(ctx, ev.text)
-				case keyQuit:
-					return nil
 				}
 			case eventResize:
 			case eventFocusGained:
@@ -224,7 +218,7 @@ func (ui *uiState) render(now time.Time) string {
 }
 
 func (ui *uiState) renderFooter(width int) string {
-	message := " Ctrl-C quit  Ctrl-O open pane  ↑/↓ select  typing sends to pane "
+	message := " Esc quit  Ctrl-O open pane  ↑/↓ select  typing + Enter send to pane "
 	if ui.lastError != "" {
 		message = " " + ui.lastError + " "
 	}
