@@ -1,0 +1,5 @@
+/.gocache/
+/.gomodcache/
+/.gopath/
+/.smoke.db
+/tmux-agents

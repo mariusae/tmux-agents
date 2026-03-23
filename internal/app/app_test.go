@@ -1,0 +1,112 @@
+package app
+
+import (
+	"context"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/mariusae/tmux-agents/internal/model"
+	"github.com/mariusae/tmux-agents/internal/store"
+)
+
+func TestStatusLineShowsOnlyWaitingAgentLabels(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.OpenBolt(filepath.Join(t.TempDir(), "tmux-agents.db"))
+	if err != nil {
+		t.Fatalf("OpenBolt returned error: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Now().UTC()
+	for _, event := range []model.Event{
+		{
+			Time:              now.Add(-2 * time.Minute),
+			Provider:          "codex",
+			ProviderSessionID: "session-1",
+			TmuxSession:       "ion",
+			TmuxWindow:        "3",
+			TmuxPane:          "0",
+			Kind:              model.EventKindStateAwaitingInput,
+			Source:            model.EventSourceHook,
+		},
+		{
+			Time:              now.Add(-1 * time.Minute),
+			Provider:          "claude",
+			ProviderSessionID: "session-2",
+			TmuxSession:       "proj",
+			TmuxWindow:        "1",
+			TmuxPane:          "2",
+			Kind:              model.EventKindStateAwaitingInput,
+			Source:            model.EventSourceHook,
+		},
+		{
+			Time:              now,
+			Provider:          "codex",
+			ProviderSessionID: "session-3",
+			TmuxSession:       "misc",
+			TmuxWindow:        "7",
+			TmuxPane:          "1",
+			Kind:              model.EventKindStateIdle,
+			Source:            model.EventSourceHook,
+		},
+	} {
+		if _, _, err := st.RecordEvent(ctx, event); err != nil {
+			t.Fatalf("RecordEvent returned error: %v", err)
+		}
+	}
+
+	if err := st.SetMeta(ctx, "last_reconcile_at", now.Format(time.RFC3339Nano)); err != nil {
+		t.Fatalf("SetMeta returned error: %v", err)
+	}
+
+	application := &App{store: st}
+	line, err := application.StatusLine(ctx)
+	if err != nil {
+		t.Fatalf("StatusLine returned error: %v", err)
+	}
+
+	if line != "claude@proj:1.2 codex@ion:3.0" {
+		t.Fatalf("StatusLine() = %q, want %q", line, "claude@proj:1.2 codex@ion:3.0")
+	}
+}
+
+func TestStatusLineEmptyWhenNothingWaiting(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.OpenBolt(filepath.Join(t.TempDir(), "tmux-agents.db"))
+	if err != nil {
+		t.Fatalf("OpenBolt returned error: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Now().UTC()
+	if _, _, err := st.RecordEvent(ctx, model.Event{
+		Time:              now,
+		Provider:          "codex",
+		ProviderSessionID: "session-1",
+		TmuxSession:       "ion",
+		TmuxWindow:        "3",
+		TmuxPane:          "0",
+		Kind:              model.EventKindStateRunning,
+		Source:            model.EventSourceHook,
+	}); err != nil {
+		t.Fatalf("RecordEvent returned error: %v", err)
+	}
+	if err := st.SetMeta(ctx, "last_reconcile_at", now.Format(time.RFC3339Nano)); err != nil {
+		t.Fatalf("SetMeta returned error: %v", err)
+	}
+
+	application := &App{store: st}
+	line, err := application.StatusLine(ctx)
+	if err != nil {
+		t.Fatalf("StatusLine returned error: %v", err)
+	}
+
+	if line != "" {
+		t.Fatalf("StatusLine() = %q, want empty string", line)
+	}
+}
