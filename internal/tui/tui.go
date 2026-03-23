@@ -158,10 +158,6 @@ func (ui *uiState) refreshAgents(ctx context.Context) {
 		return
 	}
 
-	// Reverse so most recent state change is at the bottom.
-	for i, j := 0, len(agents)-1; i < j; i, j = i+1, j-1 {
-		agents[i], agents[j] = agents[j], agents[i]
-	}
 	ui.agents = agents
 	ui.lastError = ""
 
