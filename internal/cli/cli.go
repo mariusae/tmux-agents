@@ -65,7 +65,7 @@ func Run(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer)
 			return 1
 		}
 		defer application.Close()
-		return runShow(ctx, application, stdout, stderr)
+		return runShow(ctx, application, args[1:], stdout, stderr)
 	case "hook":
 		application, err := app.OpenDefault()
 		if err != nil {
@@ -246,8 +246,21 @@ func runLog(ctx context.Context, application *app.App, args []string, stdout io.
 	}
 }
 
-func runShow(ctx context.Context, application *app.App, stdout io.Writer, stderr io.Writer) int {
-	agents, err := application.AgentsSnapshot(ctx)
+func runShow(ctx context.Context, application *app.App, args []string, stdout io.Writer, stderr io.Writer) int {
+	showFlags := flag.NewFlagSet("show", flag.ContinueOnError)
+	showFlags.SetOutput(stderr)
+	all := showFlags.Bool("a", false, "include gone agents")
+	if err := showFlags.Parse(args); err != nil {
+		return 1
+	}
+
+	var agents []model.Agent
+	var err error
+	if *all {
+		agents, err = application.AllAgentsSnapshot(ctx)
+	} else {
+		agents, err = application.AgentsSnapshot(ctx)
+	}
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "show: %v\n", err)
 		return 1
@@ -449,7 +462,7 @@ func printUsage(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "  -profile")
 	_, _ = fmt.Fprintln(w, "  setup")
 	_, _ = fmt.Fprintln(w, "  status [-d delimiter]")
-	_, _ = fmt.Fprintln(w, "  show")
+	_, _ = fmt.Fprintln(w, "  show [-a]")
 	_, _ = fmt.Fprintln(w, "  show-setup")
 	_, _ = fmt.Fprintln(w, "  install-hooks")
 	_, _ = fmt.Fprintln(w, "  uninstall-hooks")

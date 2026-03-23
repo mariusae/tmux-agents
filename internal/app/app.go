@@ -140,6 +140,20 @@ func (a *App) Agents(ctx context.Context) ([]model.Agent, error) {
 }
 
 func (a *App) AgentsSnapshot(ctx context.Context) ([]model.Agent, error) {
+	all, err := a.AllAgentsSnapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	live := make([]model.Agent, 0, len(all))
+	for _, agent := range all {
+		if agent.Live {
+			live = append(live, agent)
+		}
+	}
+	return live, nil
+}
+
+func (a *App) AllAgentsSnapshot(ctx context.Context) ([]model.Agent, error) {
 	agents, err := a.store.ListAgents(ctx)
 	if err != nil {
 		return nil, err
