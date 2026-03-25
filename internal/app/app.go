@@ -289,6 +289,15 @@ func ReconcileIncremental(ctx context.Context, budget time.Duration) (reconcile.
 		// DB may not exist yet; that's fine, proceed with empty staleness.
 		return reconcile.Result{}, nil
 	}
+
+	// Skip if a recent reconcile already ran (avoid piling on).
+	if last, _ := ro.GetMeta(ctx, "last_reconcile_at"); last != "" {
+		if t, err := time.Parse(time.RFC3339Nano, last); err == nil && time.Since(t) < 2*time.Second {
+			_ = ro.Close()
+			return reconcile.Result{}, nil
+		}
+	}
+
 	raw, _ := ro.ListMetaPrefix(ctx, "pane_checked_at:")
 	_ = ro.Close()
 
@@ -310,7 +319,7 @@ func ReconcileIncremental(ctx context.Context, budget time.Duration) (reconcile.
 	}
 
 	// Apply with a short write-lock timeout.
-	st, err := store.OpenBoltTryWrite(dbPath, 200*time.Millisecond)
+	st, err := store.OpenBoltTryWrite(dbPath, 50*time.Millisecond)
 	if err != nil {
 		return reconcile.Result{}, nil // lock busy, skip
 	}

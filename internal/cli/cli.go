@@ -107,7 +107,7 @@ func Run(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer)
 }
 
 func runStatus(ctx context.Context, stdout io.Writer, stderr io.Writer) int {
-	_, _ = app.ReconcileIncremental(ctx, 250*time.Millisecond)
+	_, _ = app.ReconcileIncremental(ctx, 100*time.Millisecond)
 
 	application, err := app.OpenDefaultReadOnly()
 	if err != nil {
