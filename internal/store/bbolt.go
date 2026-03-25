@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	bolt "go.etcd.io/bbolt"
@@ -27,11 +28,19 @@ type BoltStore struct {
 }
 
 func OpenBolt(path string) (*BoltStore, error) {
+	return openBolt(path, 5*time.Second)
+}
+
+func OpenBoltTryWrite(path string, timeout time.Duration) (*BoltStore, error) {
+	return openBolt(path, timeout)
+}
+
+func openBolt(path string, timeout time.Duration) (*BoltStore, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err
 	}
 
-	db, err := bolt.Open(path, 0o600, &bolt.Options{Timeout: 5 * time.Second})
+	db, err := bolt.Open(path, 0o600, &bolt.Options{Timeout: timeout})
 	if err != nil {
 		return nil, err
 	}
@@ -183,6 +192,19 @@ func (s *BoltStore) SetMeta(_ context.Context, key string, value string) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
 		return tx.Bucket(metaBucket).Put([]byte(key), []byte(value))
 	})
+}
+
+func (s *BoltStore) ListMetaPrefix(_ context.Context, prefix string) (map[string]string, error) {
+	result := make(map[string]string)
+	prefixBytes := []byte(prefix)
+	err := s.db.View(func(tx *bolt.Tx) error {
+		cursor := tx.Bucket(metaBucket).Cursor()
+		for k, v := cursor.Seek(prefixBytes); k != nil && strings.HasPrefix(string(k), prefix); k, v = cursor.Next() {
+			result[string(k)] = string(v)
+		}
+		return nil
+	})
+	return result, err
 }
 
 func encodeUint64(v uint64) []byte {

@@ -68,7 +68,7 @@ func Run(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer)
 		defer application.Close()
 		return runShow(ctx, application, args[1:], stdout, stderr)
 	case "hook":
-		application, err := app.OpenDefault()
+		application, err := app.OpenDefaultTimeout(500 * time.Millisecond)
 		if err != nil {
 			_, _ = fmt.Fprintf(stderr, "open store: %v\n", err)
 			return 1
@@ -107,10 +107,7 @@ func Run(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer)
 }
 
 func runStatus(ctx context.Context, stdout io.Writer, stderr io.Writer) int {
-	if _, err := app.ReconcileDefault(ctx); err != nil {
-		_, _ = fmt.Fprintf(stderr, "status: %v\n", err)
-		return 1
-	}
+	_, _ = app.ReconcileIncremental(ctx, 250*time.Millisecond)
 
 	application, err := app.OpenDefaultReadOnly()
 	if err != nil {

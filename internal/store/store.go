@@ -13,4 +13,5 @@ type Store interface {
 	ListAgents(ctx context.Context) ([]model.Agent, error)
 	GetMeta(ctx context.Context, key string) (string, error)
 	SetMeta(ctx context.Context, key string, value string) error
+	ListMetaPrefix(ctx context.Context, prefix string) (map[string]string, error)
 }

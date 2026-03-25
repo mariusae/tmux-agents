@@ -28,11 +28,19 @@ type RecordRequest struct {
 }
 
 func OpenDefault() (*App, error) {
+	return OpenDefaultTimeout(5 * time.Second)
+}
+
+func OpenDefaultTimeout(lockTimeout time.Duration) (*App, error) {
 	dbPath, err := defaultDBPath()
 	if err != nil {
 		return nil, err
 	}
-	return Open(dbPath)
+	st, err := store.OpenBoltTryWrite(dbPath, lockTimeout)
+	if err != nil {
+		return nil, err
+	}
+	return &App{store: st}, nil
 }
 
 func OpenDefaultReadOnly() (*App, error) {
@@ -257,12 +265,57 @@ func ReconcileDefault(ctx context.Context) (reconcile.Result, error) {
 		return reconcile.Result{}, err
 	}
 
-	application, err := OpenDefault()
+	dbPath, err := defaultDBPath()
 	if err != nil {
 		return reconcile.Result{}, err
 	}
-	defer application.Close()
-	return reconcile.Apply(ctx, application.store, snapshot)
+	st, err := store.OpenBolt(dbPath)
+	if err != nil {
+		return reconcile.Result{}, err
+	}
+	defer st.Close()
+	return reconcile.Apply(ctx, st, snapshot)
+}
+
+func ReconcileIncremental(ctx context.Context, budget time.Duration) (reconcile.Result, error) {
+	dbPath, err := defaultDBPath()
+	if err != nil {
+		return reconcile.Result{}, err
+	}
+
+	// Read pane staleness from DB (read-only, no lock contention).
+	ro, err := store.OpenBoltReadOnly(dbPath)
+	if err != nil {
+		// DB may not exist yet; that's fine, proceed with empty staleness.
+		return reconcile.Result{}, nil
+	}
+	raw, _ := ro.ListMetaPrefix(ctx, "pane_checked_at:")
+	_ = ro.Close()
+
+	paneAge := make(map[string]time.Time, len(raw))
+	for k, v := range raw {
+		paneID := strings.TrimPrefix(k, "pane_checked_at:")
+		if t, err := time.Parse(time.RFC3339Nano, v); err == nil {
+			paneAge[paneID] = t
+		}
+	}
+
+	// Capture incrementally within budget.
+	snapshot, err := reconcile.CaptureIncremental(ctx, budget, paneAge)
+	if err != nil {
+		return reconcile.Result{}, err
+	}
+	if len(snapshot.CheckedPanes) == 0 {
+		return reconcile.Result{}, nil
+	}
+
+	// Apply with a short write-lock timeout.
+	st, err := store.OpenBoltTryWrite(dbPath, 200*time.Millisecond)
+	if err != nil {
+		return reconcile.Result{}, nil // lock busy, skip
+	}
+	defer st.Close()
+	return reconcile.Apply(ctx, st, snapshot)
 }
 
 func defaultDBPath() (string, error) {

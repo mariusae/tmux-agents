@@ -3,6 +3,7 @@ package reconcile
 import (
 	"context"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -20,8 +21,9 @@ type Result struct {
 }
 
 type Snapshot struct {
-	CapturedAt time.Time
-	LiveEvents []model.Event
+	CapturedAt   time.Time
+	LiveEvents   []model.Event
+	CheckedPanes map[string]bool // nil means all panes were checked (full reconcile)
 }
 
 type Profile struct {
@@ -79,6 +81,47 @@ func Capture(ctx context.Context) (Snapshot, error) {
 			snapshot.LiveEvents = append(snapshot.LiveEvents, r.event)
 		}
 	}
+	return snapshot, nil
+}
+
+func CaptureIncremental(ctx context.Context, budget time.Duration, paneAge map[string]time.Time) (Snapshot, error) {
+	deadline := time.Now().Add(budget)
+
+	panes, err := tmux.ListPanes(ctx)
+	if err != nil {
+		return Snapshot{}, err
+	}
+
+	// Sort by staleness: unknown panes first, then oldest-checked first.
+	sort.Slice(panes, func(i, j int) bool {
+		ti, oki := paneAge[panes[i].PaneID]
+		tj, okj := paneAge[panes[j].PaneID]
+		if !oki {
+			return okj // unknown before known
+		}
+		if !okj {
+			return false
+		}
+		return ti.Before(tj)
+	})
+
+	snapshot := Snapshot{
+		CapturedAt:   time.Now().UTC(),
+		LiveEvents:   make([]model.Event, 0, len(panes)),
+		CheckedPanes: make(map[string]bool, len(panes)),
+	}
+
+	for _, pane := range panes {
+		if time.Now().After(deadline) {
+			break
+		}
+		snapshot.CheckedPanes[pane.PaneID] = true
+		event, ok := detectLiveAgent(ctx, pane)
+		if ok {
+			snapshot.LiveEvents = append(snapshot.LiveEvents, event)
+		}
+	}
+
 	return snapshot, nil
 }
 
@@ -209,6 +252,11 @@ func Apply(ctx context.Context, st store.Store, snapshot Snapshot) (Result, erro
 		if _, ok := liveKeys[agent.Key]; ok {
 			continue
 		}
+		// For incremental snapshots, only mark agents missing if their
+		// pane was actually checked in this pass.
+		if snapshot.CheckedPanes != nil && !snapshot.CheckedPanes[agentPaneID(agent)] {
+			continue
+		}
 
 		event := model.Event{
 			Time:              now,
@@ -232,7 +280,23 @@ func Apply(ctx context.Context, st store.Store, snapshot Snapshot) (Result, erro
 		return result, err
 	}
 
+	// Update per-pane check timestamps.
+	if snapshot.CheckedPanes != nil {
+		nowStr := now.Format(time.RFC3339Nano)
+		for paneID := range snapshot.CheckedPanes {
+			_ = st.SetMeta(ctx, "pane_checked_at:"+paneID, nowStr)
+		}
+	}
+
 	return result, nil
+}
+
+func agentPaneID(agent model.Agent) string {
+	// Reconcile-sourced agents use synthetic session IDs of the form "pane:%N".
+	if strings.HasPrefix(agent.ProviderSessionID, "pane:") {
+		return agent.ProviderSessionID[len("pane:"):]
+	}
+	return ""
 }
 
 func detectLiveAgent(ctx context.Context, pane tmux.Pane) (model.Event, bool) {
