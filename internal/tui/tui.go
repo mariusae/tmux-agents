@@ -410,7 +410,7 @@ func (ui *uiState) renderTopBorder(leftWidth, rightWidth int, now time.Time) str
 		if ts != "" && ts != "-" {
 			rightTitle = " " + target + " " + ts + " "
 		}
-		if !ui.previewAt.IsZero() && now.Sub(ui.previewAt) > 5*time.Second && ui.previewFor == target {
+		if !ui.previewAt.IsZero() && now.Sub(ui.previewAt) > 5*time.Second && ui.previewFor == agent.TmuxTarget() {
 			rightTitle += "(stale) "
 		}
 	}
@@ -474,7 +474,7 @@ func (ui *uiState) selectedAgent() model.Agent {
 }
 
 func (ui *uiState) selectedTarget() string {
-	return ui.selectedAgent().TargetLabel()
+	return ui.selectedAgent().TmuxTarget()
 }
 
 func (ui *uiState) selectedKey() string {

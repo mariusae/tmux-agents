@@ -99,6 +99,14 @@ func Run(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer)
 		}
 		_, _ = fmt.Fprintf(stdout, "reconciled %d live agents, updated %d, marked %d missing\n", result.Seen, result.Updated, result.Missing)
 		return 0
+	case "reset":
+		dbPath, err := app.ResetDB()
+		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "reset: %v\n", err)
+			return 1
+		}
+		_, _ = fmt.Fprintf(stdout, "removed %s\n", dbPath)
+		return 0
 	default:
 		_, _ = fmt.Fprintf(stderr, "unknown command %q\n\n", args[0])
 		printUsage(stderr)
@@ -459,6 +467,7 @@ func printUsage(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "  record [--source user|hook|reconcile|system] <agent> <session> <kind> [message...]")
 	_, _ = fmt.Fprintln(w, "  log [-f] [-n count]")
 	_, _ = fmt.Fprintln(w, "  reconcile")
+	_, _ = fmt.Fprintln(w, "  reset")
 }
 
 func printHookReport(w io.Writer, report setup.HookReport) {

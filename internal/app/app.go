@@ -107,6 +107,7 @@ func (a *App) Record(ctx context.Context, req RecordRequest) (model.Event, model
 		TmuxWindow:        tmuxInfo.Window,
 		TmuxWindowName:    tmuxInfo.WindowName,
 		TmuxPane:          tmuxInfo.Pane,
+		TmuxPaneID:        tmuxInfo.PaneID,
 		Kind:              kind,
 		Message:           strings.TrimSpace(req.Message),
 		Source:            source,
@@ -325,6 +326,17 @@ func ReconcileIncremental(ctx context.Context, budget time.Duration) (reconcile.
 	}
 	defer st.Close()
 	return reconcile.Apply(ctx, st, snapshot)
+}
+
+func ResetDB() (string, error) {
+	dbPath, err := defaultDBPath()
+	if err != nil {
+		return "", err
+	}
+	if err := os.Remove(dbPath); err != nil && !os.IsNotExist(err) {
+		return dbPath, err
+	}
+	return dbPath, nil
 }
 
 func defaultDBPath() (string, error) {

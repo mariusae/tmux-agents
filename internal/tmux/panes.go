@@ -140,6 +140,18 @@ func SelectTarget(ctx context.Context, target string) error {
 		return nil
 	}
 
+	// Pane IDs (e.g., %42) are stable and can be used directly as targets
+	// for all tmux commands; tmux resolves the session and window.
+	if strings.HasPrefix(target, "%") {
+		if err := runTmux(ctx, "switch-client", "-t", target); err != nil && !isNoCurrentClient(err) {
+			return err
+		}
+		if err := runTmux(ctx, "select-window", "-t", target); err != nil {
+			return err
+		}
+		return runTmux(ctx, "select-pane", "-t", target)
+	}
+
 	session, windowTarget := splitSessionTarget(target)
 	if session != "" {
 		if err := runTmux(ctx, "switch-client", "-t", session); err != nil && !isNoCurrentClient(err) {

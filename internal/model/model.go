@@ -54,6 +54,7 @@ type Event struct {
 	TmuxWindow        string            `json:"tmux_window,omitempty"`
 	TmuxWindowName    string            `json:"tmux_window_name,omitempty"`
 	TmuxPane          string            `json:"tmux_pane,omitempty"`
+	TmuxPaneID        string            `json:"tmux_pane_id,omitempty"`
 	Kind              EventKind         `json:"kind"`
 	Message           string            `json:"message,omitempty"`
 	Source            EventSource       `json:"source"`
@@ -75,6 +76,7 @@ type Agent struct {
 	TmuxWindow        string     `json:"tmux_window,omitempty"`
 	TmuxWindowName    string     `json:"tmux_window_name,omitempty"`
 	TmuxPane          string     `json:"tmux_pane,omitempty"`
+	TmuxPaneID        string     `json:"tmux_pane_id,omitempty"`
 	State             AgentState `json:"state"`
 	AwaitingInput     bool       `json:"awaiting_input"`
 	Live              bool       `json:"live"`
@@ -111,6 +113,13 @@ func (a Agent) TargetLabel() string {
 		windowDisplay = name
 	}
 	return fmt.Sprintf("%s:%s.%s", session, windowDisplay, pane)
+}
+
+func (a Agent) TmuxTarget() string {
+	if a.TmuxPaneID == "" {
+		return ""
+	}
+	return a.TmuxPaneID
 }
 
 func (a Agent) LocationLabel() string {
@@ -229,6 +238,9 @@ func ApplyEvent(agent Agent, event Event) Agent {
 	}
 	if event.TmuxPane != "" {
 		agent.TmuxPane = event.TmuxPane
+	}
+	if event.TmuxPaneID != "" {
+		agent.TmuxPaneID = event.TmuxPaneID
 	}
 	if !event.Time.IsZero() {
 		agent.LastEventAt = event.Time
