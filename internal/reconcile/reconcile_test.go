@@ -1,9 +1,13 @@
 package reconcile
 
 import (
+	"context"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/mariusae/tmux-agents/internal/model"
+	"github.com/mariusae/tmux-agents/internal/store"
 )
 
 func TestCodexLooksAwaitingInput(t *testing.T) {
@@ -49,4 +53,203 @@ func TestClassifyLiveStateForCodexIdleFallback(t *testing.T) {
 	if kind != model.EventKindStateIdle {
 		t.Fatalf("expected idle fallback, got %q", kind)
 	}
+}
+
+func TestApplyMarksHookAgentMissingWhenPaneGone(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st := openTestStore(t)
+	defer st.Close()
+
+	now := time.Now().UTC()
+	recordTestEvent(t, ctx, st, model.Event{
+		Time:              now.Add(-time.Minute),
+		Provider:          "codex",
+		ProviderSessionID: "session-1",
+		TmuxSession:       "dead",
+		TmuxWindow:        "0",
+		TmuxPane:          "0",
+		TmuxPaneID:        "%42",
+		Kind:              model.EventKindStateAwaitingInput,
+		Source:            model.EventSourceHook,
+	})
+
+	result, err := Apply(ctx, st, Snapshot{
+		CapturedAt: now,
+		LivePanes:  map[string]bool{},
+	})
+	if err != nil {
+		t.Fatalf("Apply returned error: %v", err)
+	}
+	if result.Missing != 1 {
+		t.Fatalf("Apply marked %d missing agents, want 1", result.Missing)
+	}
+
+	agent := onlyAgent(t, ctx, st, "codex:session-1")
+	if agent.Live {
+		t.Fatal("expected hook agent to be marked not live")
+	}
+	if agent.State != model.AgentStateGone {
+		t.Fatalf("agent state = %q, want %q", agent.State, model.AgentStateGone)
+	}
+}
+
+func TestApplyMarksHookAgentMissingWhenSessionGoneWithoutPaneID(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st := openTestStore(t)
+	defer st.Close()
+
+	now := time.Now().UTC()
+	recordTestEvent(t, ctx, st, model.Event{
+		Time:              now.Add(-time.Minute),
+		Provider:          "codex",
+		ProviderSessionID: "session-1",
+		TmuxSession:       "dead",
+		TmuxWindow:        "0",
+		TmuxPane:          "0",
+		Kind:              model.EventKindStateAwaitingInput,
+		Source:            model.EventSourceHook,
+	})
+
+	result, err := Apply(ctx, st, Snapshot{
+		CapturedAt:   now,
+		LivePanes:    map[string]bool{"%1": true},
+		LiveSessions: map[string]bool{"other": true},
+	})
+	if err != nil {
+		t.Fatalf("Apply returned error: %v", err)
+	}
+	if result.Missing != 1 {
+		t.Fatalf("Apply marked %d missing agents, want 1", result.Missing)
+	}
+
+	agent := onlyAgent(t, ctx, st, "codex:session-1")
+	if agent.Live {
+		t.Fatal("expected hook agent to be marked not live")
+	}
+}
+
+func TestApplyMarksHookAgentMissingWhenCheckedPaneHasNoAgent(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st := openTestStore(t)
+	defer st.Close()
+
+	now := time.Now().UTC()
+	recordTestEvent(t, ctx, st, model.Event{
+		Time:              now.Add(-time.Minute),
+		Provider:          "claude",
+		ProviderSessionID: "session-1",
+		TmuxSession:       "work",
+		TmuxWindow:        "1",
+		TmuxPane:          "0",
+		TmuxPaneID:        "%7",
+		Kind:              model.EventKindStateRunning,
+		Source:            model.EventSourceHook,
+	})
+
+	result, err := Apply(ctx, st, Snapshot{
+		CapturedAt:   now,
+		LivePanes:    map[string]bool{"%7": true},
+		CheckedPanes: map[string]bool{"%7": true},
+	})
+	if err != nil {
+		t.Fatalf("Apply returned error: %v", err)
+	}
+	if result.Missing != 1 {
+		t.Fatalf("Apply marked %d missing agents, want 1", result.Missing)
+	}
+
+	agent := onlyAgent(t, ctx, st, "claude:session-1")
+	if agent.Live {
+		t.Fatal("expected hook agent to be marked not live")
+	}
+}
+
+func TestApplyKeepsHookAgentWhenSameProviderIsLiveInSamePane(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st := openTestStore(t)
+	defer st.Close()
+
+	now := time.Now().UTC()
+	recordTestEvent(t, ctx, st, model.Event{
+		Time:              now.Add(-time.Minute),
+		Provider:          "codex",
+		ProviderSessionID: "real-session",
+		TmuxSession:       "work",
+		TmuxWindow:        "1",
+		TmuxPane:          "0",
+		TmuxPaneID:        "%9",
+		Kind:              model.EventKindStateAwaitingInput,
+		Source:            model.EventSourceHook,
+	})
+
+	result, err := Apply(ctx, st, Snapshot{
+		CapturedAt: now,
+		LivePanes:  map[string]bool{"%9": true},
+		LiveEvents: []model.Event{
+			{
+				Time:              now,
+				Provider:          "codex",
+				ProviderSessionID: "pane:%9",
+				TmuxSession:       "work",
+				TmuxWindow:        "1",
+				TmuxPane:          "0",
+				TmuxPaneID:        "%9",
+				Kind:              model.EventKindStateIdle,
+				Source:            model.EventSourceReconcile,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Apply returned error: %v", err)
+	}
+	if result.Missing != 0 {
+		t.Fatalf("Apply marked %d missing agents, want 0", result.Missing)
+	}
+
+	agent := onlyAgent(t, ctx, st, "codex:real-session")
+	if !agent.Live {
+		t.Fatal("expected hook agent to remain live")
+	}
+}
+
+func openTestStore(t *testing.T) *store.BoltStore {
+	t.Helper()
+
+	st, err := store.OpenBolt(filepath.Join(t.TempDir(), "tmux-agents.db"))
+	if err != nil {
+		t.Fatalf("OpenBolt returned error: %v", err)
+	}
+	return st
+}
+
+func recordTestEvent(t *testing.T, ctx context.Context, st store.Store, event model.Event) {
+	t.Helper()
+
+	if _, _, err := st.RecordEvent(ctx, event); err != nil {
+		t.Fatalf("RecordEvent returned error: %v", err)
+	}
+}
+
+func onlyAgent(t *testing.T, ctx context.Context, st store.Store, key string) model.Agent {
+	t.Helper()
+
+	agents, err := st.ListAgents(ctx)
+	if err != nil {
+		t.Fatalf("ListAgents returned error: %v", err)
+	}
+	for _, agent := range agents {
+		if agent.Key == key {
+			return agent
+		}
+	}
+	t.Fatalf("agent %q not found", key)
+	return model.Agent{}
 }

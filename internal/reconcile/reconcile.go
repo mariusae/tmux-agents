@@ -23,6 +23,8 @@ type Result struct {
 type Snapshot struct {
 	CapturedAt   time.Time
 	LiveEvents   []model.Event
+	LivePanes    map[string]bool // all panes reported by tmux in this scan
+	LiveSessions map[string]bool // all sessions reported by tmux in this scan
 	CheckedPanes map[string]bool // nil means all panes were checked (full reconcile)
 }
 
@@ -73,8 +75,10 @@ func Capture(ctx context.Context) (Snapshot, error) {
 	wg.Wait()
 
 	snapshot := Snapshot{
-		CapturedAt: time.Now().UTC(),
-		LiveEvents: make([]model.Event, 0, len(panes)),
+		CapturedAt:   time.Now().UTC(),
+		LiveEvents:   make([]model.Event, 0, len(panes)),
+		LivePanes:    livePaneSet(panes),
+		LiveSessions: liveSessionSet(panes),
 	}
 	for _, r := range results {
 		if r.ok {
@@ -108,6 +112,8 @@ func CaptureIncremental(ctx context.Context, budget time.Duration, paneAge map[s
 	snapshot := Snapshot{
 		CapturedAt:   time.Now().UTC(),
 		LiveEvents:   make([]model.Event, 0, len(panes)),
+		LivePanes:    livePaneSet(panes),
+		LiveSessions: liveSessionSet(panes),
 		CheckedPanes: make(map[string]bool, len(panes)),
 	}
 
@@ -197,8 +203,10 @@ func CaptureWithProfile(ctx context.Context) (Snapshot, Profile, error) {
 	wg.Wait()
 
 	snapshot := Snapshot{
-		CapturedAt: time.Now().UTC(),
-		LiveEvents: make([]model.Event, 0, len(panes)),
+		CapturedAt:   time.Now().UTC(),
+		LiveEvents:   make([]model.Event, 0, len(panes)),
+		LivePanes:    livePaneSet(panes),
+		LiveSessions: liveSessionSet(panes),
 	}
 	prof.PaneProfiles = make([]PaneProfile, 0, len(panes))
 	for _, r := range results {
@@ -231,9 +239,16 @@ func Apply(ctx context.Context, st store.Store, snapshot Snapshot) (Result, erro
 
 	result := Result{Seen: len(snapshot.LiveEvents)}
 	liveKeys := make(map[string]struct{}, len(snapshot.LiveEvents))
+	liveProvidersByPane := make(map[string]map[string]struct{})
 
 	for _, liveEvent := range snapshot.LiveEvents {
 		liveKeys[liveEvent.AgentKey()] = struct{}{}
+		if paneID := strings.TrimSpace(liveEvent.TmuxPaneID); paneID != "" {
+			if liveProvidersByPane[paneID] == nil {
+				liveProvidersByPane[paneID] = make(map[string]struct{})
+			}
+			liveProvidersByPane[paneID][liveEvent.Provider] = struct{}{}
+		}
 
 		existing, exists := agentByKey[liveEvent.AgentKey()]
 		if !needsLiveUpdate(existing, liveEvent, exists) {
@@ -247,15 +262,19 @@ func Apply(ctx context.Context, st store.Store, snapshot Snapshot) (Result, erro
 	}
 
 	for _, agent := range agents {
-		if agent.ReconcileSource == "" || agent.State == model.AgentStateGone {
+		if agent.State == model.AgentStateGone {
 			continue
 		}
 		if _, ok := liveKeys[agent.Key]; ok {
 			continue
 		}
-		// For incremental snapshots, only mark agents missing if their
-		// pane was actually checked in this pass.
-		if snapshot.CheckedPanes != nil && !snapshot.CheckedPanes[agentPaneID(agent)] {
+		paneID := agentPaneID(agent)
+		if providerStillLiveInPane(liveProvidersByPane, paneID, agent.Provider) {
+			continue
+		}
+
+		message, ok := missingReason(snapshot, agent, paneID)
+		if !ok {
 			continue
 		}
 
@@ -269,7 +288,7 @@ func Apply(ctx context.Context, st store.Store, snapshot Snapshot) (Result, erro
 			TmuxPane:          agent.TmuxPane,
 			TmuxPaneID:        agent.TmuxPaneID,
 			Kind:              model.EventKindLiveMissing,
-			Message:           "agent no longer detected in live tmux scan",
+			Message:           message,
 			Source:            model.EventSourceReconcile,
 		}
 		if _, _, err := st.RecordEvent(ctx, event); err != nil {
@@ -293,12 +312,70 @@ func Apply(ctx context.Context, st store.Store, snapshot Snapshot) (Result, erro
 	return result, nil
 }
 
+func livePaneSet(panes []tmux.Pane) map[string]bool {
+	livePanes := make(map[string]bool, len(panes))
+	for _, pane := range panes {
+		if strings.TrimSpace(pane.PaneID) != "" {
+			livePanes[pane.PaneID] = true
+		}
+	}
+	return livePanes
+}
+
+func liveSessionSet(panes []tmux.Pane) map[string]bool {
+	liveSessions := make(map[string]bool)
+	for _, pane := range panes {
+		if strings.TrimSpace(pane.Session) != "" {
+			liveSessions[pane.Session] = true
+		}
+	}
+	return liveSessions
+}
+
 func agentPaneID(agent model.Agent) string {
-	// Reconcile-sourced agents use synthetic session IDs of the form "pane:%N".
+	if paneID := strings.TrimSpace(agent.TmuxPaneID); paneID != "" {
+		return paneID
+	}
+	// Older reconcile-sourced agents use synthetic session IDs of the form "pane:%N".
 	if strings.HasPrefix(agent.ProviderSessionID, "pane:") {
 		return agent.ProviderSessionID[len("pane:"):]
 	}
 	return ""
+}
+
+func providerStillLiveInPane(liveProvidersByPane map[string]map[string]struct{}, paneID, provider string) bool {
+	if paneID == "" || provider == "" {
+		return false
+	}
+	providers := liveProvidersByPane[paneID]
+	if providers == nil {
+		return false
+	}
+	_, ok := providers[provider]
+	return ok
+}
+
+func missingReason(snapshot Snapshot, agent model.Agent, paneID string) (string, bool) {
+	if paneID != "" && snapshot.LivePanes != nil && !snapshot.LivePanes[paneID] {
+		return "agent pane no longer exists in tmux", true
+	}
+	if paneID == "" && strings.TrimSpace(agent.TmuxSession) != "" && snapshot.LiveSessions != nil && !snapshot.LiveSessions[agent.TmuxSession] {
+		return "agent tmux session no longer exists", true
+	}
+
+	// For incremental snapshots, only mark agents missing from panes that
+	// were actually inspected in this pass. Pane deletion is handled above
+	// because ListPanes gives us the complete pane set.
+	if snapshot.CheckedPanes != nil {
+		if paneID == "" || !snapshot.CheckedPanes[paneID] {
+			return "", false
+		}
+	}
+
+	if paneID != "" || agent.ReconcileSource != "" {
+		return "agent no longer detected in live tmux scan", true
+	}
+	return "", false
 }
 
 func detectLiveAgent(ctx context.Context, pane tmux.Pane) (model.Event, bool) {
