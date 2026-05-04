@@ -20,6 +20,11 @@ type Result struct {
 	Missing int
 }
 
+// perPaneTimeout caps how long detectLiveAgent may spend on a single pane.
+// Without this, a hung ps or tmux capture-pane would block the whole reconcile
+// (and any background loop driving it) forever.
+const perPaneTimeout = 2 * time.Second
+
 type Snapshot struct {
 	CapturedAt   time.Time
 	LiveEvents   []model.Event
@@ -156,6 +161,9 @@ func CaptureWithProfile(ctx context.Context) (Snapshot, Profile, error) {
 		go func(i int, pane tmux.Pane) {
 			defer wg.Done()
 			pp := PaneProfile{PaneID: pane.PaneID}
+
+			ctx, cancel := context.WithTimeout(ctx, perPaneTimeout)
+			defer cancel()
 
 			cmdStart := time.Now()
 			commands, err := process.DescendantCommands(ctx, pane.PanePID)
@@ -379,6 +387,9 @@ func missingReason(snapshot Snapshot, agent model.Agent, paneID string) (string,
 }
 
 func detectLiveAgent(ctx context.Context, pane tmux.Pane) (model.Event, bool) {
+	ctx, cancel := context.WithTimeout(ctx, perPaneTimeout)
+	defer cancel()
+
 	commands, err := process.DescendantCommands(ctx, pane.PanePID)
 	if err != nil {
 		return model.Event{}, false
