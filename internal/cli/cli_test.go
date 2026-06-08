@@ -47,7 +47,7 @@ func TestFormatShowTime(t *testing.T) {
 	}
 }
 
-func TestRunListOutputsToolTargetsByLastActive(t *testing.T) {
+func TestRunListOutputsToolTargetsInInboxOrder(t *testing.T) {
 	ctx := context.Background()
 	disableLiveTmux(t)
 

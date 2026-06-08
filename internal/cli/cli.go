@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"sort"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -178,15 +177,6 @@ func runList(ctx context.Context, application *app.App, args []string, stdout io
 		_, _ = fmt.Fprintf(stderr, "list: %v\n", err)
 		return 1
 	}
-
-	sort.SliceStable(agents, func(i, j int) bool {
-		left := agents[i].LastActivityAt()
-		right := agents[j].LastActivityAt()
-		if left.Equal(right) {
-			return agents[i].Label() < agents[j].Label()
-		}
-		return left.After(right)
-	})
 
 	out := make([]listAgent, 0, len(agents))
 	for _, agent := range agents {
