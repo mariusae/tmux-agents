@@ -2,9 +2,11 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -59,6 +61,14 @@ func Run(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer)
 	switch args[0] {
 	case "status":
 		return runStatus(ctx, stdout, stderr)
+	case "list":
+		application, err := app.OpenDefaultReadOnly()
+		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "open store: %v\n", err)
+			return 1
+		}
+		defer application.Close()
+		return runList(ctx, application, args[1:], stdout, stderr)
 	case "show":
 		application, err := app.OpenDefaultReadOnly()
 		if err != nil {
@@ -131,6 +141,80 @@ func runStatus(ctx context.Context, stdout io.Writer, stderr io.Writer) int {
 		return 1
 	}
 	_, _ = fmt.Fprint(stdout, line)
+	return 0
+}
+
+type listAgent struct {
+	Title             string           `json:"title"`
+	Target            string           `json:"target"`
+	TmuxPaneID        string           `json:"tmux_pane_id"`
+	TmuxSession       string           `json:"tmux_session"`
+	TmuxWindow        string           `json:"tmux_window"`
+	TmuxWindowName    string           `json:"tmux_window_name,omitempty"`
+	TmuxPane          string           `json:"tmux_pane"`
+	Provider          string           `json:"provider"`
+	ProviderSessionID string           `json:"provider_session_id"`
+	State             model.AgentState `json:"state"`
+	AwaitingInput     bool             `json:"awaiting_input"`
+	Live              bool             `json:"live"`
+	LastActiveAt      time.Time        `json:"last_active_at"`
+	LastEventAt       time.Time        `json:"last_event_at"`
+	LastSeenAt        time.Time        `json:"last_seen_at"`
+}
+
+func runList(ctx context.Context, application *app.App, args []string, stdout io.Writer, stderr io.Writer) int {
+	listFlags := flag.NewFlagSet("list", flag.ContinueOnError)
+	listFlags.SetOutput(stderr)
+	if err := listFlags.Parse(args); err != nil {
+		return 1
+	}
+	if len(listFlags.Args()) != 0 {
+		_, _ = fmt.Fprintln(stderr, "usage: tmux-agents list")
+		return 1
+	}
+
+	agents, err := application.AgentsSnapshot(ctx)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "list: %v\n", err)
+		return 1
+	}
+
+	sort.SliceStable(agents, func(i, j int) bool {
+		left := agents[i].LastActivityAt()
+		right := agents[j].LastActivityAt()
+		if left.Equal(right) {
+			return agents[i].Label() < agents[j].Label()
+		}
+		return left.After(right)
+	})
+
+	out := make([]listAgent, 0, len(agents))
+	for _, agent := range agents {
+		out = append(out, listAgent{
+			Title:             agent.Label(),
+			Target:            agent.TmuxTarget(),
+			TmuxPaneID:        agent.TmuxPaneID,
+			TmuxSession:       agent.TmuxSession,
+			TmuxWindow:        agent.TmuxWindow,
+			TmuxWindowName:    agent.TmuxWindowName,
+			TmuxPane:          agent.TmuxPane,
+			Provider:          agent.Provider,
+			ProviderSessionID: agent.ProviderSessionID,
+			State:             agent.State,
+			AwaitingInput:     agent.AwaitingInput,
+			Live:              agent.Live,
+			LastActiveAt:      agent.LastActivityAt(),
+			LastEventAt:       agent.LastEventAt,
+			LastSeenAt:        agent.LastSeenAt,
+		})
+	}
+
+	encoder := json.NewEncoder(stdout)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(out); err != nil {
+		_, _ = fmt.Fprintf(stderr, "list: %v\n", err)
+		return 1
+	}
 	return 0
 }
 
@@ -459,6 +543,7 @@ func printUsage(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "  -profile")
 	_, _ = fmt.Fprintln(w, "  setup")
 	_, _ = fmt.Fprintln(w, "  status [-d delimiter]")
+	_, _ = fmt.Fprintln(w, "  list")
 	_, _ = fmt.Fprintln(w, "  show [-a]")
 	_, _ = fmt.Fprintln(w, "  show-setup")
 	_, _ = fmt.Fprintln(w, "  install-hooks")

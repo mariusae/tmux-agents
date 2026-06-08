@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"testing"
 	"time"
@@ -43,6 +44,118 @@ func TestFormatShowTime(t *testing.T) {
 				t.Fatalf("formatShowTime() = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestRunListOutputsToolTargetsByLastActive(t *testing.T) {
+	ctx := context.Background()
+	disableLiveTmux(t)
+
+	dbPath := filepath.Join(t.TempDir(), "tmux-agents.db")
+	st, err := store.OpenBolt(dbPath)
+	if err != nil {
+		t.Fatalf("OpenBolt returned error: %v", err)
+	}
+
+	now := time.Now().UTC()
+	events := []model.Event{
+		{
+			Time:              now.Add(-10 * time.Minute),
+			Provider:          "codex",
+			ProviderSessionID: "older",
+			TmuxSession:       "work",
+			TmuxWindow:        "2",
+			TmuxWindowName:    "api",
+			TmuxPane:          "0",
+			TmuxPaneID:        "%20",
+			Kind:              model.EventKindStateRunning,
+			Source:            model.EventSourceHook,
+		},
+		{
+			Time:              now.Add(-2 * time.Minute),
+			Provider:          "claude",
+			ProviderSessionID: "newer",
+			TmuxSession:       "work",
+			TmuxWindow:        "1",
+			TmuxWindowName:    "app",
+			TmuxPane:          "1",
+			TmuxPaneID:        "%12",
+			Kind:              model.EventKindStateRunning,
+			Source:            model.EventSourceHook,
+		},
+		{
+			Time:              now.Add(-1 * time.Minute),
+			Provider:          "claude",
+			ProviderSessionID: "newer",
+			TmuxSession:       "work",
+			TmuxWindow:        "1",
+			TmuxWindowName:    "app",
+			TmuxPane:          "1",
+			TmuxPaneID:        "%12",
+			Kind:              model.EventKindStateAwaitingInput,
+			Source:            model.EventSourceHook,
+		},
+	}
+	for _, event := range events {
+		if _, _, err := st.RecordEvent(ctx, event); err != nil {
+			t.Fatalf("RecordEvent returned error: %v", err)
+		}
+	}
+	if err := st.SetMeta(ctx, "last_reconcile_at", now.Format(time.RFC3339Nano)); err != nil {
+		t.Fatalf("SetMeta returned error: %v", err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+
+	t.Setenv("TMUX_AGENTS_DB_PATH", dbPath)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	if code := Run(ctx, []string{"list"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("Run(list) code = %d, stderr = %q", code, stderr.String())
+	}
+
+	var got []struct {
+		Title             string `json:"title"`
+		Target            string `json:"target"`
+		TmuxPaneID        string `json:"tmux_pane_id"`
+		TmuxSession       string `json:"tmux_session"`
+		TmuxWindow        string `json:"tmux_window"`
+		TmuxWindowName    string `json:"tmux_window_name"`
+		TmuxPane          string `json:"tmux_pane"`
+		Provider          string `json:"provider"`
+		ProviderSessionID string `json:"provider_session_id"`
+		State             string `json:"state"`
+		AwaitingInput     bool   `json:"awaiting_input"`
+		Live              bool   `json:"live"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("list output is not JSON: %v\n%s", err, stdout.String())
+	}
+	if len(got) != 2 {
+		t.Fatalf("list returned %d agents, want 2: %#v", len(got), got)
+	}
+
+	first := got[0]
+	if first.Title != "claude@work:app.1" {
+		t.Fatalf("first title = %q, want inbox label %q", first.Title, "claude@work:app.1")
+	}
+	if first.Target != "%12" || first.TmuxPaneID != "%12" {
+		t.Fatalf("first tmux target = %q/%q, want %%12", first.Target, first.TmuxPaneID)
+	}
+	if first.TmuxSession != "work" || first.TmuxWindow != "1" || first.TmuxWindowName != "app" || first.TmuxPane != "1" {
+		t.Fatalf("first tmux location = %#v, want work:1(app).1", first)
+	}
+	if first.Provider != "claude" || first.ProviderSessionID != "newer" {
+		t.Fatalf("first provider fields = %q/%q, want claude/newer", first.Provider, first.ProviderSessionID)
+	}
+	if first.State != string(model.AgentStateAwaitingInput) || !first.AwaitingInput || !first.Live {
+		t.Fatalf("first state fields = %#v, want awaiting live agent", first)
+	}
+
+	if got[1].Title != "codex@work:api.0" {
+		t.Fatalf("second title = %q, want older codex agent", got[1].Title)
 	}
 }
 
